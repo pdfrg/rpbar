@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.3.1"
+    readonly property string buildId: "0.4.1"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -108,6 +108,7 @@ Item {
     function play() {
         wantPlaying = true;
         restartAttempts = 0;
+        root.paused = false;
         if (!player.running)
             player.running = true;
 
@@ -116,21 +117,41 @@ Item {
 
     function stop() {
         wantPlaying = false;
+        root.paused = false;
         ipcRetryTimer.stop();
         ipcSocket.connected = false;
         player.running = false;
     }
 
+    // wantPlaying = intent to have audio; paused = mpv actually holding
+    // (usually via media keys / media widget, which drive mpv directly).
+    // Toggle resumes a pause instead of stopping it.
     function toggle() {
-        if (wantPlaying)
+        if (root.paused && root.wantPlaying)
+            root.setPaused(false);
+        else if (wantPlaying)
             stop();
         else
             play();
     }
 
+    // M3 IPC write (pause IS runtime-writable, unlike metadata): the
+    // resume path for external pauses. Fire-and-forget; the pause
+    // observer confirms and corrects `paused` either way.
+    function setPaused(on) {
+        if (!ipcSocket.connected)
+            return ;
+
+        ipcSocket.write(JSON.stringify({
+            "command": ["set_property", "pause", !!on]
+        }) + "\n");
+        ipcSocket.flush();
+    }
+
     function switchStation(chan) {
         var st = Rp.stationByChan(chan);
         root.station = st.chan;
+        root.paused = false;
         root.saveConfig({
             "station": root.station
         });
@@ -147,6 +168,13 @@ Item {
             player.running = true;
             root.kickIpc();
         });
+    }
+
+    // Station dial (P2): prev/next station with wrap-around. Same
+    // semantics as tapping a row: switches live while playing,
+    // selects-only while stopped.
+    function stepStation(delta) {
+        root.switchStation(Rp.stepChan(root.station, Number(delta) || 0));
     }
 
     // (Re)connect the IPC socket to a (re)started mpv: reset the retry
@@ -441,6 +469,11 @@ Item {
 
         function switchStation(chan: string) : string {
             root.switchStation(Number(chan));
+            return "ok";
+        }
+
+        function stepStation(delta: string) : string {
+            root.stepStation(Number(delta));
             return "ok";
         }
 

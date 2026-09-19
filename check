@@ -10,7 +10,7 @@ node --input-type=module -e "
 import fs from 'fs';
 import assert from 'node:assert/strict';
 const src = fs.readFileSync('RpLogic.js', 'utf8');
-const Rp = new Function(src + '; return {stations,stationByChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality};')();
+const Rp = new Function(src + '; return {stations,stationByChan,stepChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality};')();
 assert.equal(Rp.stations().length, 7);
 assert.equal(Rp.streamUrl(0), 'https://stream.radioparadise.com/aac-128');
 assert.equal(Rp.streamUrl(1), 'https://stream.radioparadise.com/mellow-128');
@@ -24,6 +24,10 @@ assert.equal(Rp.coverId('https://img.radioparadise.com/covers/m/11697.jpg'), '11
 assert.equal(Rp.coverId('https://img.radioparadise.com/covers/s/1.jpg'), '1');
 assert.equal(Rp.coverId('https://evil.com/covers/m/11697.jpg'), '');
 assert.equal(Rp.coverId('https://img.radioparadise.com/covers/m/../x.jpg'), '');
+assert.equal(Rp.stepChan(0, 1), 1);
+assert.equal(Rp.stepChan(945, 1), 0);
+assert.equal(Rp.stepChan(0, -1), 945);
+assert.equal(Rp.stepChan(999, 1), 0);
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com/covers/l/1.jpg'), true);
 assert.equal(Rp.isAllowedImageUrl('http://img.radioparadise.com/x.jpg'), false);
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com.evil.com/x'), false);

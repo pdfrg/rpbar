@@ -28,6 +28,19 @@ function stationByChan(chan) {
   return list[0]
 }
 
+// Tuning-dial step: index of chan, moved by delta with wrap-around.
+// Unknown chan starts from the top (index 0 + delta).
+function stepChan(chan, delta) {
+  var list = stations()
+  var idx = -1
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].chan === chan) { idx = i; break }
+  }
+  var next = idx === -1 ? 0 : (idx + delta) % list.length
+  if (next < 0) next += list.length
+  return list[next].chan
+}
+
 // v1 stream URLs at the default aac-128 quality. Exceptions (probed):
 // - chan 0 (Main Mix) uses the bare path: /aac-128 (no main-mix-128).
 // - chan 42 (Serenity) has NO 128 variant; bare /serenity is 64k aac.

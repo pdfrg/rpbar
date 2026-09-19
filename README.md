@@ -19,12 +19,16 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 ## Use
 
-- Left-click the pill: play / stop (note glyph = playing).
+- Left-click the pill: play / stop (note glyph = playing). Pausing
+  via media keys / the media widget shows a dimmed triangle; clicking
+  it resumes.
 - Right-click the pill: popup with now-playing (Title / Artist /
-  Album (Year)) + cover, 7 stations, transport, and a
-  track-notifications toggle (on by default). Clicking the current
-  station does nothing; Stop is the stop path.
+  Album (Year)) + cover, 7 stations, transport with prev/next-station
+  dial, and a track-notifications toggle (on by default). Clicking
+  the current station does nothing; Stop is the stop path.
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).
+  Prev/next keys have no stream meaning (single-item playlist) and do
+  nothing — use the popup dial to change stations.
   The media widget shows the ICY "Artist - Title" one-liner: mpv
   exposes metadata read-only, so the 3-line split is impossible
   from our side (verified against mpv-mpris source).

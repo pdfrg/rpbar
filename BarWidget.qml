@@ -14,8 +14,11 @@ BarWidget {
     // wantPlaying, not playing: during the stream-drop restart backoff the
     // stream is conceptually on, and a left-click should still mean "stop".
     readonly property bool playing: radio ? radio.wantPlaying : false
+    readonly property bool paused: radio ? radio.paused : false
+    // 3-state pill (P1): note = playing (status); dimmed triangle =
+    // externally paused (matches omarchy.media); plain triangle = stopped.
     readonly property string stationTitle: radio ? radio.stationTitle : ""
-    readonly property string buildId: "0.3.1"
+    readonly property string buildId: "0.4.1"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -30,14 +33,6 @@ BarWidget {
         if (radio)
             radio.notifyOnTrackChange = setting("trackNotifications", true) !== false;
 
-    }
-
-    function pillText() {
-        if (!radio)
-            return "RP";
-
-        var s = root.playing ? "■ " : "▶ ";
-        return s + (root.stationTitle || "Radio Paradise");
     }
 
     moduleName: "io.github.pdfrg.rpbar"
@@ -59,10 +54,10 @@ BarWidget {
 
             anchors.verticalCenter: parent.verticalCenter
             // Note = playing (status indicator, cf. waybar mpris);
-            // triangle = stopped (press to play). The tooltip already
-            // explains the click action.
-            text: root.playing ? "󰝚" : "󰐊"
-            color: root.playing ? Color.accent : (root.bar ? Qt.darker(root.bar.barForeground, 1.5) : "grey")
+            // triangle = stopped (press to play) or paused-dimmed
+            // (press to resume, cf. omarchy.media).
+            text: root.playing && !root.paused ? "󰝚" : "󰐊"
+            color: root.playing && !root.paused ? Color.accent : (root.bar ? Qt.darker(root.bar.barForeground, root.paused ? 2 : 1.5) : "grey")
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
         }
@@ -293,15 +288,43 @@ BarWidget {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(8)
 
+                // Station dial (P2): MPRIS prev/next are dead by nature
+                // on a single-item stream playlist, so the skip
+                // affordance lives here. Steps with wrap-around; live
+                // switch while playing, select-only while stopped.
                 Button {
-                    iconText: root.playing ? "󰓛" : "󰐊"
-                    text: root.playing ? "Stop" : "Play"
+                    iconText: "󰒮"
+                    foreground: root.bar.foreground
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: {
+                        if (root.radio)
+                            root.radio.stepStation(-1);
+
+                    }
+                }
+
+                Button {
+                    iconText: root.playing && !root.paused ? "󰓛" : "󰐊"
+                    text: root.playing ? (root.paused ? "Resume" : "Stop") : "Play"
                     foreground: root.bar.foreground
                     horizontalPadding: Style.spacing.controlPaddingX
                     verticalPadding: Style.spacing.controlPaddingY
                     onClicked: {
                         if (root.radio)
                             root.radio.toggle();
+
+                    }
+                }
+
+                Button {
+                    iconText: "󰒭"
+                    foreground: root.bar.foreground
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: {
+                        if (root.radio)
+                            root.radio.stepStation(1);
 
                     }
                 }
