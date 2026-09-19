@@ -72,6 +72,14 @@ function sanitizeText(s, maxLen) {
   return t
 }
 
+// Notification-safe text: sanitizeText plus dropping "<", the only way
+// to open a rich-text tag. Deleting rather than escaping: with no tag
+// left the text can't be detected as rich, so an entity would show up
+// literally. ">" is kept (can't start a tag; "a -> b" reads correctly).
+function notifySafe(s, maxLen) {
+  return sanitizeText(s, maxLen).replace(/</g, "")
+}
+
 // Allow-list for remote images (cover art) before any Image.source use.
 // https only, RP hosts only.
 function isAllowedImageUrl(u) {

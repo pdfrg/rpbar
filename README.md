@@ -4,7 +4,8 @@ Omarchy 4 (Quickshell) plugin for [Radio Paradise](https://radioparadise.com):
 7 stations streamed via mpv, with MPRIS so the built-in media widget stays
 in the loop.
 
-Status: milestone 1 — stream plays, pill toggles, station popup switches.
+Status: milestone 2 — live track metadata (stream + RP API), cover art,
+track-change notifications, station popup switches.
 
 ## Install
 
@@ -19,8 +20,12 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 ## Use
 
 - Left-click the pill: play / stop.
-- Right-click the pill: station popup (7 stations + transport).
+- Right-click the pill: popup with now-playing + cover, 7 stations,
+  transport, and a track-notifications toggle (on by default).
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).
+
+Track info is stream-first (ICY title over mpv IPC) with album / year /
+cover filled in from the RP API seconds later.
 
 ## Configure
 
@@ -37,6 +42,10 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 After hand-editing, run `omarchy restart shell` (reopening the popup is
 not enough — `FileView.watchChanges` quirk).
+
+To force notifications off regardless of the popup toggle, add
+`"trackNotifications": false` to this widget's entry in
+`~/.config/omarchy/shell.json`.
 
 ## Develop
 

@@ -15,7 +15,7 @@ BarWidget {
     // stream is conceptually on, and a left-click should still mean "stop".
     readonly property bool playing: radio ? radio.wantPlaying : false
     readonly property string stationTitle: radio ? radio.stationTitle : ""
-    readonly property string buildId: "0.1.2"
+    readonly property string buildId: "0.2.5"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -127,15 +127,70 @@ BarWidget {
                 font.bold: true
             }
 
-            Text {
-                text: root.radio && (root.radio.artist || root.radio.title) ? (root.radio.artist ? root.radio.artist + " — " + root.radio.title : root.radio.title) : "Press play to tune in"
-                textFormat: Text.PlainText
-                color: root.bar ? root.bar.foreground : "white"
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.subtitle
-                font.bold: true
-                elide: Text.ElideRight
+            Row {
+                spacing: Style.space(10)
                 width: parent.width
+
+                Item {
+                    width: Style.space(64)
+                    height: Style.space(64)
+                    clip: true
+
+                    Image {
+                        id: artImage
+
+                        anchors.fill: parent
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        // Popup-gated: no art fetch on any monitor while
+                        // the popup is closed. The source is allow-listed
+                        // https (img.radioparadise.com) by the service.
+                        sourceSize.width: Style.space(128)
+                        sourceSize.height: Style.space(128)
+                        source: root.popupOpen && root.radio && root.radio.cover ? root.radio.cover : ""
+                        visible: status === Image.Ready
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: artImage.status !== Image.Ready
+                        text: "󰝚"
+                        color: root.bar ? root.bar.foreground : "white"
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.displayLarge
+                    }
+
+                }
+
+                Column {
+                    spacing: Style.space(2)
+                    width: parent.width - Style.space(74)
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        text: root.radio && (root.radio.artist || root.radio.title) ? (root.radio.artist ? root.radio.artist + " — " + root.radio.title + (root.radio.year ? " (" + root.radio.year + ")" : "") : root.radio.title) : "Press play to tune in"
+                        textFormat: Text.PlainText
+                        color: root.bar ? root.bar.foreground : "white"
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.subtitle
+                        font.bold: true
+                        elide: Text.ElideRight
+                        width: parent.width
+                    }
+
+                    Text {
+                        text: root.radio ? root.radio.album : ""
+                        textFormat: Text.PlainText
+                        color: root.bar ? Qt.darker(root.bar.foreground, 1.3) : "grey"
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.bodySmall
+                        elide: Text.ElideRight
+                        width: parent.width
+                        visible: text !== ""
+                    }
+
+                }
+
             }
 
             Repeater {
@@ -212,6 +267,20 @@ BarWidget {
                     }
                 }
 
+            }
+
+            Toggle {
+                width: parent.width
+                label: "Track notifications"
+                description: "Notify on every track change while playing."
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                checked: root.radio ? root.radio.notifyOnTrackChange : true
+                onClicked: {
+                    if (root.radio)
+                        root.radio.setNotify(!root.radio.notifyOnTrackChange);
+
+                }
             }
 
         }
