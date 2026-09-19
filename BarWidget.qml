@@ -15,7 +15,7 @@ BarWidget {
     // stream is conceptually on, and a left-click should still mean "stop".
     readonly property bool playing: radio ? radio.wantPlaying : false
     readonly property string stationTitle: radio ? radio.stationTitle : ""
-    readonly property string buildId: "0.2.5"
+    readonly property string buildId: "0.3.1"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -58,7 +58,10 @@ BarWidget {
             id: glyph
 
             anchors.verticalCenter: parent.verticalCenter
-            text: root.playing ? "󰏤" : "󰐊"
+            // Note = playing (status indicator, cf. waybar mpris);
+            // triangle = stopped (press to play). The tooltip already
+            // explains the click action.
+            text: root.playing ? "󰝚" : "󰐊"
             color: root.playing ? Color.accent : (root.bar ? Qt.darker(root.bar.barForeground, 1.5) : "grey")
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -142,12 +145,12 @@ BarWidget {
                         anchors.fill: parent
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
-                        // Popup-gated: no art fetch on any monitor while
-                        // the popup is closed. The source is allow-listed
-                        // https (img.radioparadise.com) by the service.
+                        // Cached file first (instant reopen, offline);
+                        // remote while the first fetch lands. Gated on
+                        // popup-open so a closed popup never fetches.
                         sourceSize.width: Style.space(128)
                         sourceSize.height: Style.space(128)
-                        source: root.popupOpen && root.radio && root.radio.cover ? root.radio.cover : ""
+                        source: root.popupOpen ? (root.radio && (root.radio.coverFile || root.radio.cover) ? (root.radio.coverFile || root.radio.cover) : "") : (root.radio && root.radio.coverFile ? root.radio.coverFile : "")
                         visible: status === Image.Ready
                     }
 
@@ -167,8 +170,9 @@ BarWidget {
                     width: parent.width - Style.space(74)
                     anchors.verticalCenter: parent.verticalCenter
 
+                    // Media-widget parity: Title / Artist / Album (Year).
                     Text {
-                        text: root.radio && (root.radio.artist || root.radio.title) ? (root.radio.artist ? root.radio.artist + " — " + root.radio.title + (root.radio.year ? " (" + root.radio.year + ")" : "") : root.radio.title) : "Press play to tune in"
+                        text: root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in")
                         textFormat: Text.PlainText
                         color: root.bar ? root.bar.foreground : "white"
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -179,7 +183,7 @@ BarWidget {
                     }
 
                     Text {
-                        text: root.radio ? root.radio.album : ""
+                        text: root.radio ? root.radio.artist : ""
                         textFormat: Text.PlainText
                         color: root.bar ? Qt.darker(root.bar.foreground, 1.3) : "grey"
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -187,6 +191,36 @@ BarWidget {
                         elide: Text.ElideRight
                         width: parent.width
                         visible: text !== ""
+                    }
+
+                    Row {
+                        id: albumRow
+
+                        spacing: Style.space(4)
+                        width: parent.width
+                        visible: root.radio && root.radio.album !== ""
+
+                        Text {
+                            text: root.radio ? root.radio.album : ""
+                            textFormat: Text.PlainText
+                            color: root.bar ? Qt.darker(root.bar.foreground, 1.6) : "grey"
+                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                            font.pixelSize: Style.font.caption
+                            elide: Text.ElideRight
+                            width: Math.max(0, albumRow.width - (yearText.visible ? yearText.implicitWidth + albumRow.spacing : 0))
+                        }
+
+                        Text {
+                            id: yearText
+
+                            text: root.radio && root.radio.year ? "(" + root.radio.year + ")" : ""
+                            textFormat: Text.PlainText
+                            color: root.bar ? Qt.darker(root.bar.foreground, 2) : "grey"
+                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                            font.pixelSize: Style.font.caption
+                            visible: text !== ""
+                        }
+
                     }
 
                 }
@@ -216,8 +250,10 @@ BarWidget {
                         spacing: Style.space(8)
 
                         Text {
-                            text: current ? "󰏤" : "󰐊"
-                            color: root.bar ? root.bar.foreground : "white"
+                            // Note = now playing here (status marker, not
+                            // an action); triangle = select this station.
+                            text: current ? "󰝚" : "󰐊"
+                            color: current ? Color.accent : (root.bar ? root.bar.foreground : "white")
                             font.family: root.bar ? root.bar.fontFamily : Style.font.family
                             font.pixelSize: Style.font.bodySmall
                             anchors.verticalCenter: parent.verticalCenter
@@ -240,7 +276,10 @@ BarWidget {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            if (root.radio)
+                            // Clicking the current station is a no-op:
+                            // re-selecting it would only restart the
+                            // stream. Stop lives on the button below.
+                            if (root.radio && root.radio.station !== modelData.chan)
                                 root.radio.switchStation(modelData.chan);
 
                         }

@@ -4,8 +4,8 @@ Omarchy 4 (Quickshell) plugin for [Radio Paradise](https://radioparadise.com):
 7 stations streamed via mpv, with MPRIS so the built-in media widget stays
 in the loop.
 
-Status: milestone 2 — live track metadata (stream + RP API), cover art,
-track-change notifications, station popup switches.
+Status: track metadata (stream + RP API), cached cover art, rich
+track-change notifications, 3-line popup.
 
 ## Install
 
@@ -19,13 +19,21 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 ## Use
 
-- Left-click the pill: play / stop.
-- Right-click the pill: popup with now-playing + cover, 7 stations,
-  transport, and a track-notifications toggle (on by default).
+- Left-click the pill: play / stop (note glyph = playing).
+- Right-click the pill: popup with now-playing (Title / Artist /
+  Album (Year)) + cover, 7 stations, transport, and a
+  track-notifications toggle (on by default). Clicking the current
+  station does nothing; Stop is the stop path.
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).
+  The media widget shows the ICY "Artist - Title" one-liner: mpv
+  exposes metadata read-only, so the 3-line split is impossible
+  from our side (verified against mpv-mpris source).
 
 Track info is stream-first (ICY title over mpv IPC) with album / year /
-cover filled in from the RP API seconds later.
+cover filled in from the RP API seconds later. Covers cache to
+`~/.cache/rpbar/art/` (kept to the newest 50) so popup reopens and
+revisits are instant. Notifications fire once per track when
+enrichment lands, with the cached art attached.
 
 ## Configure
 

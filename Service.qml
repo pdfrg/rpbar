@@ -12,6 +12,22 @@ import "RpLogic.js" as Rp
 // instance -- NEVER pass --load-scripts=no (that opts out and would leave
 // the media widget empty).
 Item {
+    // MPRIS verdict (F5, probed live 2026-09-19, NOT implemented): the
+    // 3-line split is impossible from our side. mpv 0.41 answers
+    // `set_property metadata` with "error accessing property"
+    // (read-only) and `set_property media-title` the same; only
+    // `force-media-title` is writable, and that's still one line.
+    // mpv-mpris (mpris.c) maps xesam:title <- media-title,
+    // xesam:artist <- metadata/by-key/Artist|uploader, xesam:album <-
+    // metadata/by-key/Album, and rebuilds Metadata only on
+    // media-title/duration change. Art is doubly out: mpris:artUrl
+    // comes from mpv `cover-art-files`, but mpv-mpris caches the art
+    // URL per stream URL (cached_path), so per-track art would stick
+    // on later tracks = track-art mismatch, worse than no art (user
+    // rule). Result: omarchy.media keeps the ICY "Artist - Title"
+    // one-liner (max info, no games); our popup + toast carry the
+    // rich display. Re-probe if mpv/mpv-mpris change.
+
     id: root
 
     // Injected by omarchy-shell (the first-party service loader).
@@ -22,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.2.5"
+    readonly property string buildId: "0.3.1"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -64,6 +80,22 @@ Item {
     // on, rate-floored so a flapping stream can't spam. Network strings
     // only ever travel as notify-send argv (never a shell string).
     readonly property int notifyFloorMs: 5000
+    // Delayed rich toast (F6): one per track, fired when enrichment
+    // completes (album/year/cover known) rather than at stream change.
+    // lastToastKey stops the 12 s poll re-firing; the 5 s floor stops a
+    // flapping stream spamming. Omarchy renders its own toasts and never
+    // shows the -a app name, so "Radio Paradise" is the summary header.
+    // Network strings travel as notify-send argv only (never a shell
+    // string); the icon is our own cache file (never a remote URL).
+    property string lastToastKey: ""
+    // On-disk art cache (F1): ~/.cache/rpbar/art/<coverid>.jpg. Popup
+    // reopens, notification icons, and the MPRIS art probe all read the
+    // file -- instant and offline after the first fetch. Downloads are
+    // bounded (15 s, 512 KB, allow-listed RP host only); the id comes
+    // from Rp.coverId, never from raw URL text.
+    readonly property string artDir: home + "/.cache/rpbar/art"
+    readonly property int artCacheKeep: 50
+    property string coverFile: ""
 
     // IPC freshness probe: omarchy-shell io.github.pdfrg.rpbar buildInfo
     // (NOT `shell call ...`: that only routes to panel/overlay/menu
@@ -141,7 +173,7 @@ Item {
         root.album = "";
         root.year = "";
         root.cover = "";
-        root.maybeNotify();
+        root.coverFile = "";
     }
 
     // Persisted notification preference (popup toggle). shell.json
@@ -154,8 +186,18 @@ Item {
         });
     }
 
-    function maybeNotify() {
+    function maybeToast() {
         if (!root.playing || !root.notifyOnTrackChange)
+            return ;
+
+        if (root.title === "" || root.lastToastKey === root.streamKey)
+            return ;
+
+        // Cover expected but not cached yet: the download completion
+        // re-enters here, so the single toast carries art. A track
+        // change in between strands this (lastToastKey never set for
+        // the old key) -- correct, the new track toasts instead.
+        if (Rp.coverId(root.cover) !== "" && root.coverFile === "")
             return ;
 
         var now = Date.now();
@@ -163,12 +205,21 @@ Item {
             return ;
 
         root.lastNotifyAt = now;
-        var summary = Rp.notifySafe(root.title || root.stationTitle, 128);
-        var body = Rp.notifySafe(root.artist, 128);
-        if (summary === "")
-            return ;
+        root.lastToastKey = root.streamKey;
+        var lines = [Rp.notifySafe(root.title, 128)];
+        if (root.artist !== "")
+            lines.push(Rp.notifySafe(root.artist, 128));
 
-        Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "-e", "--", summary, body]);
+        var albumLine = Rp.notifySafe(root.album, 128);
+        if (albumLine !== "") {
+            var y = Rp.notifySafe(root.year, 16);
+            lines.push(y !== "" ? albumLine + " (" + y + ")" : albumLine);
+        }
+        var args = ["notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", lines.join("\n")];
+        if (root.coverFile !== "")
+            args = ["notify-send", "-a", "Radio Paradise", "-e", "-i", root.coverFile.substring("file://".length), "--", "Radio Paradise", lines.join("\n")];
+
+        Quickshell.execDetached(args);
     }
 
     function handleMpvMessage(line) {
@@ -183,7 +234,10 @@ Item {
         } catch (e) {
             return ;
         }
-        if (!msg || msg.event !== "property-change")
+        if (!msg || typeof msg !== "object")
+            return ;
+
+        if (msg.event !== "property-change")
             return ;
 
         if (msg.id === root.metadataObserveId && msg.data && typeof msg.data === "object") {
@@ -297,6 +351,67 @@ Item {
         root.year = Rp.sanitizeText(song.year, 16);
         var cover = Rp.sanitizeText(song.cover_med || song.cover_small || song.cover, 2000);
         root.cover = Rp.isAllowedImageUrl(cover) ? cover : "";
+        root.fetchCoverFile();
+        // Album arrived: toast now if no art is expected, else when
+        // the cover download completes (maybeToast gates both).
+        root.maybeToast();
+    }
+
+    function coverFileFor(id) {
+        return id === "" ? "" : root.artDir + "/" + id + ".jpg";
+    }
+
+    function fetchCoverFile() {
+        var id = Rp.coverId(root.cover);
+        if (id === "") {
+            root.coverFile = "";
+            return ;
+        }
+        // Single-flight: the 12 s poll re-fires this for the current
+        // track, so a skipped attempt retries shortly. Never kill a
+        // download in flight (that would leave a partial file).
+        if (artCheckProc.running || artDlProc.running)
+            return ;
+
+        // Existence probe by exit code (no output collected): 0 means
+        // the revisit fast path, anything else a bounded download.
+        var path = root.coverFileFor(id);
+        artCheckProc.wantPath = path;
+        artCheckProc.command = ["/bin/cat", path];
+        artCheckProc.running = true;
+    }
+
+    function onArtCheckDone(exitOk, wantPath) {
+        if (wantPath !== root.coverFileFor(Rp.coverId(root.cover)))
+            return ;
+
+        if (exitOk) {
+            root.coverFile = "file://" + wantPath;
+            return ;
+        }
+        artDlProc.wantPath = wantPath;
+        artDlProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "524288", "-A", "rpbar/" + root.buildId, "-o", wantPath, String(root.cover)];
+        artDlProc.running = true;
+    }
+
+    function onArtDownloaded(exitOk, wantPath) {
+        if (wantPath !== root.coverFileFor(Rp.coverId(root.cover)))
+            return ;
+
+        if (exitOk) {
+            root.coverFile = "file://" + wantPath;
+            // Art landed after enrichment: the deferred toast fires now
+            // (with art), and the popup picks the file up live.
+            root.maybeToast();
+        }
+        // Trim to the newest artCacheKeep files. Names are our own
+        // <digits>.jpg writes, so the pipeline can't escape the dir.
+        artTrimProc.command = ["/usr/bin/sh", "-c", "cd \"$ART_DIR\" 2>/dev/null && /bin/ls -t *.jpg 2>/dev/null | /usr/bin/tail -n +51 | /usr/bin/xargs -r /usr/bin/rm --"];
+        artTrimProc.environment = {
+            "ART_DIR": root.artDir,
+            "PATH": "/usr/bin:/bin"
+        };
+        artTrimProc.running = true;
     }
 
     Component.onCompleted: {
@@ -338,6 +453,7 @@ Item {
                 "album": root.album,
                 "year": root.year,
                 "cover": root.cover,
+                "coverFile": root.coverFile,
                 "playing": root.playing,
                 "paused": root.paused
             });
@@ -471,10 +587,37 @@ Item {
 
     }
 
+    // Art-cache workers (see fetchCoverFile). Single-flight per worker
+    // via the wantPath guard: a stale completion whose path no longer
+    // matches the current track is dropped, never applied.
+    Process {
+        id: artCheckProc
+
+        property string wantPath: ""
+
+        onExited: function(exitCode, exitStatus) {
+            root.onArtCheckDone(exitCode === 0, artCheckProc.wantPath);
+        }
+    }
+
+    Process {
+        id: artDlProc
+
+        property string wantPath: ""
+
+        onExited: function(exitCode, exitStatus) {
+            root.onArtDownloaded(exitCode === 0, artDlProc.wantPath);
+        }
+    }
+
+    Process {
+        id: artTrimProc
+    }
+
     Process {
         id: dirSetup
 
-        command: ["/usr/bin/mkdir", "-p", root.configDir, root.socketDir]
+        command: ["/usr/bin/mkdir", "-p", root.configDir, root.socketDir, root.artDir]
         running: false
     }
 

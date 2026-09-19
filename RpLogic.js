@@ -80,6 +80,13 @@ function notifySafe(s, maxLen) {
   return sanitizeText(s, maxLen).replace(/</g, "")
 }
 
+// RP cover id for the on-disk art cache: ".../covers/m/11697.jpg" ->
+// "11697". Anything else -> "" (never derive a filename from it).
+function coverId(u) {
+  var m = /^https:\/\/img\.radioparadise\.com\/covers\/[sml]\/([0-9]+)\.jpg$/i.exec(String(u || ""))
+  return m ? m[1] : ""
+}
+
 // Allow-list for remote images (cover art) before any Image.source use.
 // https only, RP hosts only.
 function isAllowedImageUrl(u) {
