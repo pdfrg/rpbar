@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.pdfrg.rpbar",
+  "name": "rpbar",
+  "version": "0.1.0",
+  "author": "pdfrg",
+  "license": "MIT",
+  "description": "Radio Paradise streams for the Omarchy bar (7 stations, mpv + MPRIS)",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Radio Paradise",
+    "description": "Play/stop the RP stream from the bar; popup with stations and transport",
+    "category": "Media",
+    "allowMultiple": false
+  }
+}
