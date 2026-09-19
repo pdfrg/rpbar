@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.4.1"
+    readonly property string buildId: "0.5.0"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -47,6 +47,11 @@ Item {
     property string quality: Rp.defaultQuality()
     property int volume: 70
     property bool notifyOnTrackChange: true
+    // Conditional-pill width behavior (no-media mode only): "scroll" keeps
+    // a fixed max width and marquees; "grow" lets the pill widen with the
+    // text. pillMaxWidth is pixels (media widget default: 180).
+    property string pillWidthMode: "scroll"
+    property int pillMaxWidth: 180
     property bool pluginConfigLoaded: false
     property bool switchingStation: false
     property int restartAttempts: 0
@@ -214,6 +219,27 @@ Item {
         });
     }
 
+    // Conditional-pill width preference (popup toggle). shell.json
+    // `pillWidthMode` / `pillMaxWidth` remain the hard overrides, applied
+    // in-memory by syncSettings in the widget.
+    function setPillWidthMode(mode) {
+        root.pillWidthMode = mode === "grow" ? "grow" : "scroll";
+        root.saveConfig({
+            "pillWidthMode": root.pillWidthMode
+        });
+    }
+
+    function setPillMaxWidth(w) {
+        var nv = Math.round(Number(w));
+        if (isNaN(nv))
+            return ;
+
+        root.pillMaxWidth = Math.max(80, Math.min(600, nv));
+        root.saveConfig({
+            "pillMaxWidth": root.pillMaxWidth
+        });
+    }
+
     function maybeToast() {
         if (!root.playing || !root.notifyOnTrackChange)
             return ;
@@ -334,6 +360,12 @@ Item {
 
         if (typeof obj.notifyOnTrackChange === "boolean")
             root.notifyOnTrackChange = obj.notifyOnTrackChange;
+
+        if (obj.pillWidthMode === "grow" || obj.pillWidthMode === "scroll")
+            root.pillWidthMode = obj.pillWidthMode;
+
+        if (typeof obj.pillMaxWidth === "number")
+            root.pillMaxWidth = Math.max(80, Math.min(600, Math.round(obj.pillMaxWidth)));
 
         root.pluginConfigLoaded = true;
     }
@@ -488,7 +520,9 @@ Item {
                 "cover": root.cover,
                 "coverFile": root.coverFile,
                 "playing": root.playing,
-                "paused": root.paused
+                "paused": root.paused,
+                "pillWidthMode": root.pillWidthMode,
+                "pillMaxWidth": root.pillMaxWidth
             });
         }
 

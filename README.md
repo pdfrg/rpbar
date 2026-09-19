@@ -22,6 +22,12 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 - Left-click the pill: play / stop (note glyph = playing). Pausing
   via media keys / the media widget shows a dimmed triangle; clicking
   it resumes.
+- The pill adapts to the built-in media widget: when `omarchy.media`
+  shares the bar, the pill stays compact (station name only — the
+  media widget already shows `Artist - Title`). When media is absent,
+  the pill shows the track itself (`MM: Artist - Title`, with
+  per-station abbreviations MM/ML/R/G/B/S/K). Detection is per-bar
+  and switches live when the bar layout changes.
 - Right-click the pill: popup with now-playing (Title / Artist /
   Album (Year)) + cover, 7 stations, transport with prev/next-station
   dial, and a track-notifications toggle (on by default). Clicking
@@ -48,16 +54,25 @@ enrichment lands, with the cached art attached.
   "station": 0,
   "quality": "aac-128",
   "volume": 70,
-  "notifyOnTrackChange": true
+  "notifyOnTrackChange": true,
+  "pillWidthMode": "scroll",
+  "pillMaxWidth": 180
 }
 ```
+
+`pillWidthMode` controls the track-showing pill (media absent):
+`"scroll"` keeps a fixed `pillMaxWidth` (pixels, default 180, same as
+the media widget) and marquees long text; `"grow"` lets the pill widen
+with the text. Toggle it from the popup ("Scroll long track text").
 
 After hand-editing, run `omarchy restart shell` (reopening the popup is
 not enough — `FileView.watchChanges` quirk).
 
 To force notifications off regardless of the popup toggle, add
 `"trackNotifications": false` to this widget's entry in
-`~/.config/omarchy/shell.json`.
+`~/.config/omarchy/shell.json`. Same entry also accepts
+`"pillWidthMode": "grow"` and `"pillMaxWidth": <pixels>` as hard
+overrides for the track-pill width behavior.
 
 ## Develop
 

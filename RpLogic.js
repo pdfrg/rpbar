@@ -41,6 +41,26 @@ function stepChan(chan, delta) {
   return list[next].chan
 }
 
+// Short station codes for the full (no-media) pill: "MM: Artist - Title".
+// From fixes.txt; unknown chans fall back to "RP".
+function stationShort(chan) {
+  var codes = { 0: "MM", 1: "ML", 2: "R", 3: "G", 5: "B", 42: "S", 945: "K" }
+  var c = codes[chan]
+  return c !== undefined ? c : "RP"
+}
+
+// Full-pill text for when omarchy.media is absent. Artist/title are
+// expected sanitized already; sanitized again defensively with caps.
+// No track yet -> full station title (same as the compact pill).
+function pillText(chan, artist, title) {
+  var a = sanitizeText(artist, 128)
+  var t = sanitizeText(title, 256)
+  if (a !== "" && t !== "") return stationShort(chan) + ": " + a + " - " + t
+  if (t !== "") return stationShort(chan) + ": " + t
+  if (a !== "") return stationShort(chan) + ": " + a
+  return stationByChan(chan).title
+}
+
 // v1 stream URLs at the default aac-128 quality. Exceptions (probed):
 // - chan 0 (Main Mix) uses the bare path: /aac-128 (no main-mix-128).
 // - chan 42 (Serenity) has NO 128 variant; bare /serenity is 64k aac.

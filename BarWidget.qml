@@ -18,7 +18,24 @@ BarWidget {
     // 3-state pill (P1): note = playing (status); dimmed triangle =
     // externally paused (matches omarchy.media); plain triangle = stopped.
     readonly property string stationTitle: radio ? radio.stationTitle : ""
-    readonly property string buildId: "0.4.1"
+    // Conditional pill: compact (station name only) when omarchy.media
+    // shares this bar, full ("ABBR: Artist - Title") when it doesn't.
+    // The rev/serial locals only exist to re-evaluate live when plugins
+    // or the bar layout change; moduleWidgets() is per-bar, so this is
+    // correct on multi-monitor setups.
+    readonly property bool mediaOnBar: {
+        var rev = bar && bar.shell && bar.shell.pluginRegistry ? bar.shell.pluginRegistry.registryRevision : 0;
+        var serial = bar ? bar.barConfigSerial : 0;
+        if (rev < -1 || serial < -1)
+            return false;
+
+        return bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets("omarchy.media").length > 0 : false;
+    }
+    readonly property bool compact: root.vertical || root.mediaOnBar
+    readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
+    readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
+    readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
+    readonly property string buildId: "0.5.0"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -30,9 +47,17 @@ BarWidget {
     }
 
     function syncSettings() {
-        if (radio)
+        if (radio) {
             radio.notifyOnTrackChange = setting("trackNotifications", true) !== false;
+            var mode = setting("pillWidthMode", radio.pillWidthMode);
+            if (mode === "grow" || mode === "scroll")
+                radio.pillWidthMode = mode;
 
+            var maxW = Number(setting("pillMaxWidth", radio.pillMaxWidth));
+            if (!isNaN(maxW))
+                radio.pillMaxWidth = Math.max(80, Math.min(600, Math.round(maxW)));
+
+        }
     }
 
     moduleName: "io.github.pdfrg.rpbar"
@@ -63,8 +88,60 @@ BarWidget {
         }
 
         Text {
+            id: compactText
+
             anchors.verticalCenter: parent.verticalCenter
+            visible: root.compact
             text: root.stationTitle || "Radio Paradise"
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.barForeground : "white"
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+        }
+
+        // Full pill (no media on this bar): fixed max width in pixels
+        // with marquee scroll, cloned from omarchy.media's scrollClip.
+        Item {
+            id: scrollClip
+
+            width: Math.min(root.pillMaxWidth, fullLabel.implicitWidth)
+            height: glyph.height
+            clip: true
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !root.compact && root.scrollMode && !root.vertical && root.trackText !== ""
+
+            Text {
+                id: fullLabel
+
+                property bool needsScroll: implicitWidth > scrollClip.width
+
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.trackText
+                textFormat: Text.PlainText
+                color: root.bar ? root.bar.barForeground : "white"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.body
+
+                NumberAnimation on x {
+                    running: fullLabel.needsScroll && !root.popupOpen && !root.vertical
+                    loops: Animation.Infinite
+                    duration: Math.max(6000, fullLabel.implicitWidth * 25)
+                    from: scrollClip.width
+                    to: -fullLabel.implicitWidth
+                    easing.type: Easing.Linear
+                }
+
+            }
+
+        }
+
+        Text {
+            id: growText
+
+            anchors.verticalCenter: parent.verticalCenter
+            visible: !root.compact && (!root.scrollMode || root.vertical)
+            text: root.trackText || "Radio Paradise"
             textFormat: Text.PlainText
             color: root.bar ? root.bar.barForeground : "white"
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -341,6 +418,20 @@ BarWidget {
                 onClicked: {
                     if (root.radio)
                         root.radio.setNotify(!root.radio.notifyOnTrackChange);
+
+                }
+            }
+
+            Toggle {
+                width: parent.width
+                label: "Scroll long track text"
+                description: "Off lets the pill grow wider instead. Applies when the media widget is not on the bar."
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                checked: root.scrollMode
+                onClicked: {
+                    if (root.radio)
+                        root.radio.setPillWidthMode(root.scrollMode ? "grow" : "scroll");
 
                 }
             }
