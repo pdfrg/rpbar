@@ -20,7 +20,9 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 ## Use
 
-- Left-click the pill: play / stop (note glyph = playing). Pausing
+- Left-click the pill: play / stop (note glyph = playing, 󰒲 = playing
+  with a sleep timer running — the hover tooltip shows its countdown).
+  Pausing
   via media keys / the media widget shows a dimmed triangle; clicking
   it resumes.
 - Dropped streams reconnect on their own (up to 5 tries, then one
@@ -33,9 +35,14 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
   per-station abbreviations MM/ML/R/G/B/S/K). Detection is per-bar
   and switches live when the bar layout changes.
 - Right-click the pill: popup with now-playing (Title / Artist /
-  Album (Year)) + cover, 7 stations, a quality row (AAC 128 / AAC 320 /
-  MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
-  dial, and a track-notifications toggle (on by default). Clicking
+   Album (Year)) + cover, 7 stations, a quality row (AAC 128 / AAC 320 /
+   MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
+   dial, volume slider (0–130, per-station memory; right-click slider or
+   `m` to mute; mouse wheel on the pill adjusts volume too),
+   and a track-notifications toggle (on by default). The 󰒲 button in the
+   popup header (highlighted while a timer runs) swaps to a same-size
+   sleep view: Off / 15 / 30 / 60 with a live countdown (session-only —
+   cancelled if you stop or switch stations). Clicking
   the current station does nothing; Stop is the stop path. Clicking
   the cover opens the station's Radio Paradise page (now playing,
   bio, lyrics, comments) in the default browser — pause rpbar first
@@ -43,7 +50,7 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 - The clock button in the popup header swaps to a same-size schedule
   view: UP NEXT (up to 3 upcoming songs from the station's announced
   block, with "in X min" cues), NOW (the playing track, accent-barred),
-  and RECENTLY PLAYED (history filling the 6 fixed rows, with "N min
+  and RECENTLY PLAYED (history filling the 7 fixed rows, with "N min
   ago" cues). Same art + 3-line rows throughout; ✕ returns to the main
   view. Upcoming art is pre-fetched, so track-change notifications land
   instantly with art instead of waiting for a download. Near the end of
@@ -106,5 +113,25 @@ omarchy-shell io.github.pdfrg.rpbar schedule
 
 (`shell call <id> ...` only routes to panel/overlay/menu loaders — this
 plugin is service + bar-widget, so it exposes its own `IpcHandler` target
-instead, with `play` / `stop` / `toggle` / `switchStation <chan>` /
-`schedule` too.)
+instead. Volumes, mute, sleep, and direct-play live there too:)
+
+```sh
+omarchy-shell io.github.pdfrg.rpbar setVolume 80
+omarchy-shell io.github.pdfrg.rpbar volumeUp 5
+omarchy-shell io.github.pdfrg.rpbar toggleMute
+omarchy-shell io.github.pdfrg.rpbar sleep 30
+omarchy-shell io.github.pdfrg.rpbar playStation '{"station":1,"quality":"flacm"}'
+```
+
+Keyboard: `omarchy-shell shell summon|toggle|hide io.github.pdfrg.rpbar`
+opens the popup on the focused monitor (bind e.g. `SUPER+SHIFT+ALT+R` to
+`shell toggle ...` — `SUPER+CTRL+R/N/P` are taken by reminder/nightlight/
+power; `SUPER+SHIFT+R` is a common TUI slot. `SUPER+SHIFT+ALT+N/P` pair
+well as next/prev station via
+`omarchy-shell io.github.pdfrg.rpbar stepStation 1` /
+`stepStation -1`). Inside the popup:
+`1-7` switch station, `Up/Down` dial, `Space/Enter` play/stop, `m` mute,
+`Tab` hops to the neighboring panel, `Esc` closes. Mouse wheel on the
+pill adjusts volume (±5/notch, per-station memory). Right-click a cover
+for the large (500px) art in the image viewer; left-click still opens
+the station page.
