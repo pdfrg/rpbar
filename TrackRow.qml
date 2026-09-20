@@ -70,18 +70,24 @@ Item {
                 visible: row.isCurrent
             }
 
-            // Clickable cover: this station's RP player page (now
-            // playing, bio, lyrics, comments). Works on the placeholder
-            // too -- the page needs no track.
+            // Clickable cover: left opens this station's RP player page
+            // (now playing, bio, lyrics, comments); right opens the large
+            // (500px) art in the image viewer (C5, /tmp one-shot, never
+            // the bar/toast cache file). Works on the placeholder too --
+            // the station page needs no track (large art needs a cover).
             MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                acceptedButtons: Qt.LeftButton
-                onClicked: {
-                    if (row.radio)
-                        row.radio.openPlayerPage();
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: function(mouse) {
+                    if (!row.radio)
+                        return ;
 
+                    if (mouse.button === Qt.RightButton)
+                        row.radio.openLargeArtFor(row.cover);
+                    else
+                        row.radio.openPlayerPage();
                 }
             }
 
