@@ -222,7 +222,9 @@ function resolveCoverUrl(path, base) {
 
 // One normalized schedule entry shared by block + list parsing.
 // coverFile is filled in later by the Service art pipeline ("" = none).
-function scheduleEntry(artist, title, album, year, coverUrl, songId, playTimeMs, durationMs, eventId) {
+// ratingRaw is the RP average (block `rating` string or list
+// `listener_rating` number); stored display-ready via formatRating.
+function scheduleEntry(artist, title, album, year, coverUrl, songId, playTimeMs, durationMs, eventId, ratingRaw) {
   return {
     artist: sanitizeText(artist, 128),
     title: sanitizeText(title, 256),
@@ -233,6 +235,7 @@ function scheduleEntry(artist, title, album, year, coverUrl, songId, playTimeMs,
     playTime: Number(playTimeMs) || 0,
     duration: Number(durationMs) || 0,
     event: String(eventId === undefined || eventId === null ? "" : eventId),
+    rating: formatRating(ratingRaw),
     coverFile: ""
   }
 }
@@ -262,7 +265,7 @@ function parseBlock(text) {
   for (var i = 0; i < keys.length; i++) {
     var s = songs[String(keys[i])]
     var cover = resolveCoverUrl(s.cover_medium || s.cover_med || s.cover_small || s.cover || s.cover_large, data.image_base)
-    items.push(scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.sched_time_millis, s.duration, s.event))
+    items.push(scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.sched_time_millis, s.duration, s.event, s.rating))
   }
   return { blockId: String(data.block_id === undefined || data.block_id === null ? "" : data.block_id), items: items }
 }
@@ -303,11 +306,47 @@ function parsePlaylist(text, streamKey, maxN) {
     var s = songs[i]
     if (!s || typeof s !== "object") continue
     var cover = resolveCoverUrl(s.cover_med || s.cover_small || s.cover || s.cover_large, data.cover_base_url)
-    var e = scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.play_time, s.duration, s.event)
+    var e = scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.play_time, s.duration, s.event, s.listener_rating)
     if (entryKey(e) === streamKey) continue
     out.push(e)
   }
   return out
+}
+
+// RP average user rating (0-10 scale) display-ready with one decimal
+// (rptui parity): "6.5", "7" -> "7.0". Accepts the block `rating` string
+// or the list `listener_rating` number. Missing/zero -> "" (hidden,
+// never a placeholder).
+function formatRating(v) {
+  if (v === undefined || v === null || v === "")
+    return ""
+  var n = Number(String(v).trim())
+  if (!isFinite(n) || n <= 0)
+    return ""
+  return n.toFixed(1)
+}
+
+// Toast body lines for the track-change notification. Omarchy's
+// NotificationCard renders the summary + at most 3 body lines
+// (maximumLineCount: 3), so the rating is folded into the last content
+// line — `Album (Year) · ★ 6.5`, falling back to the artist or title
+// line when album is missing — never a 4th line that would be elided.
+// All fields are notification-sanitized here; returns at most 3 lines.
+function toastLines(title, artist, album, year, rating) {
+  var lines = []
+  var t = notifySafe(title, 128)
+  if (t === "") return lines
+  lines.push(t)
+  var a = notifySafe(artist, 128)
+  if (a !== "") lines.push(a)
+  var albumLine = notifySafe(album, 128)
+  if (albumLine !== "") {
+    var y = notifySafe(year, 16)
+    lines.push(y !== "" ? albumLine + " (" + y + ")" : albumLine)
+  }
+  var r = notifySafe(rating, 8)
+  if (r !== "") lines[lines.length - 1] += " · ★ " + r
+  return lines.slice(0, 3)
 }
 
 // Relative cue for upcoming rows: "in 3 min" / "in 1 h 5 min" /

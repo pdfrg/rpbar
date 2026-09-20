@@ -3,9 +3,10 @@ import Quickshell
 import qs.Commons
 
 // Shared now-playing / schedule row (0.9.0): 64px art + Title / Artist /
-// Album (Year · time-cue). Fixed 64px height so the history sub-view never
-// resizes the popup. artGate (popup-open) keeps closed popups fetch-free;
-// isCurrent draws the accent edge bar marking the playing track.
+// Album (Year · ★ rating · time-cue). Fixed 64px height so the history
+// sub-view never resizes the popup. artGate (popup-open) keeps closed
+// popups fetch-free; isCurrent draws the accent edge bar marking the
+// playing track.
 Item {
     id: row
 
@@ -14,6 +15,7 @@ Item {
     property string artist: ""
     property string album: ""
     property string year: ""
+    property string rating: ""
     property string timeCue: ""
     property string coverFile: ""
     property string cover: ""
@@ -117,7 +119,7 @@ Item {
 
                 spacing: Style.space(4)
                 width: parent.width
-                visible: row.album !== "" || row.timeCue !== ""
+                visible: row.album !== "" || row.rating !== "" || row.timeCue !== ""
 
                 Text {
                     text: row.album
@@ -126,7 +128,7 @@ Item {
                     font.family: row.bar ? row.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
-                    width: Math.max(0, albumRow.width - (yearText.visible ? yearText.implicitWidth + albumRow.spacing : 0) - (cueText.visible ? cueText.implicitWidth + albumRow.spacing : 0))
+                    width: Math.max(0, albumRow.width - (yearText.visible ? yearText.implicitWidth + albumRow.spacing : 0) - (ratingText.visible ? ratingText.implicitWidth + albumRow.spacing : 0) - (cueText.visible ? cueText.implicitWidth + albumRow.spacing : 0))
                     visible: text !== ""
                 }
 
@@ -136,6 +138,19 @@ Item {
                     text: row.year ? "(" + row.year + ")" : ""
                     textFormat: Text.PlainText
                     color: row.bar ? Qt.darker(row.bar.foreground, 2) : "grey"
+                    font.family: row.bar ? row.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    visible: text !== ""
+                }
+
+                // Average RP user rating (0-10 scale), hidden when the
+                // payloads carry none.
+                Text {
+                    id: ratingText
+
+                    text: row.rating ? "★ " + row.rating : ""
+                    textFormat: Text.PlainText
+                    color: Color.accent
                     font.family: row.bar ? row.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
                     visible: text !== ""

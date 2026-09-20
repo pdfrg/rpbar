@@ -6,7 +6,7 @@ in the loop.
 
 Status: track metadata (stream + RP API), cached cover art, rich
 track-change notifications, 3-line popup, schedule sub-view (up next +
-recently played, pre-fetched with art).
+recently played, pre-fetched with art), average RP user ratings.
 
 ## Install
 
@@ -58,7 +58,10 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 Track info is stream-first (ICY title over mpv IPC) with album / year /
 cover filled in from the RP API seconds later — or instantly when the
-track was pre-announced in the station block. Covers cache to
+track was pre-announced in the station block. Every row also shows the
+average RP user rating (`★ 6.5` on the 0–10 scale, hidden when the API
+carries none), and track-change notifications carry it folded into the
+album line (omarchy renders at most 3 notification body lines). Covers cache to
 `~/.cache/rpbar/art/` (kept to the newest 50) so popup reopens and
 revisits are instant. Notifications fire once per track when
 enrichment lands, with the cached art attached.

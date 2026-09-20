@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.9.0"
+    readonly property string buildId: "0.9.3"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -63,8 +63,16 @@ Item {
     property string title: ""
     property string album: ""
     property string year: ""
+    // RP average user rating (0-10, display-ready via Rp.formatRating,
+    // "" = hidden). Block-sourced only — the light poll carries no
+    // rating field and must never clear a block-set value.
+    property string rating: ""
     property string cover: ""
     property string streamKey: ""
+    // When the current streamKey was set (ms epoch). The toast waits for
+    // the block verdict for this track (see maybeToast): the block fetch
+    // fires on every track change, so this is ~one fetch, not a poll.
+    property double streamKeySetAt: 0
     property bool paused: false
     // True while mpv is stalled waiting for cache (transient) or idling
     // after a dead stream (until the reconnect lands). Drives the dimmed
@@ -99,6 +107,10 @@ Item {
     // Network strings travel as notify-send argv only (never a shell
     // string); the icon is our own cache file (never a remote URL).
     property string lastToastKey: ""
+    // Toast grace (0.9.2): how long the single toast waits for the block
+    // verdict before firing without the rating. Only reached when the
+    // block fetch fails or hangs — normally the verdict lands in ~a fetch.
+    readonly property int toastGraceMs: 15000
     // On-disk art cache (F1): ~/.cache/rpbar/art/<coverid>.jpg. Popup
     // reopens, notification icons, and the MPRIS art probe all read the
     // file -- instant and offline after the first fetch. Downloads are
@@ -273,10 +285,12 @@ Item {
             return ;
 
         root.streamKey = key;
+        root.streamKeySetAt = Date.now();
         root.artist = parts.artist;
         root.title = parts.title;
         root.album = "";
         root.year = "";
+        root.rating = "";
         root.cover = "";
         root.coverFile = "";
         // Fast path: the new track may already be prefetched as upcoming
@@ -339,6 +353,16 @@ Item {
         if (root.title === "" || root.lastToastKey === root.streamKey)
             return ;
 
+        // Block verdict (0.9.2): two enrichment paths race here — the
+        // light poll (no rating) and the block match (with rating). The
+        // toast fires once per track, so it must wait until the block
+        // fetch triggered by this track change has landed; otherwise a
+        // light-poll win permanently drops the rating line. A dead/hung
+        // block fetch falls back to a rating-less toast after the grace.
+        var blockVerdict = root.schedChan === root.station && root.blockFetchedAt >= root.streamKeySetAt;
+        if (!blockVerdict && Date.now() - root.streamKeySetAt < root.toastGraceMs)
+            return ;
+
         // Cover expected but not cached yet: the download completion
         // re-enters here, so the single toast carries art. A track
         // change in between strands this (lastToastKey never set for
@@ -352,15 +376,10 @@ Item {
 
         root.lastNotifyAt = now;
         root.lastToastKey = root.streamKey;
-        var lines = [Rp.notifySafe(root.title, 128)];
-        if (root.artist !== "")
-            lines.push(Rp.notifySafe(root.artist, 128));
-
-        var albumLine = Rp.notifySafe(root.album, 128);
-        if (albumLine !== "") {
-            var y = Rp.notifySafe(root.year, 16);
-            lines.push(y !== "" ? albumLine + " (" + y + ")" : albumLine);
-        }
+        // Body lines via Rp.toastLines: at most 3 (omarchy's
+        // NotificationCard elides past maximumLineCount 3), rating folded
+        // into the last line so it is never the cut-off 4th.
+        var lines = Rp.toastLines(root.title, root.artist, root.album, root.year, root.rating);
         var args = ["notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", lines.join("\n")];
         if (root.coverFile !== "")
             args = ["notify-send", "-a", "Radio Paradise", "-e", "-i", root.coverFile.substring("file://".length), "--", "Radio Paradise", lines.join("\n")];
@@ -626,6 +645,7 @@ Item {
             if (Rp.entryKey(it) === root.streamKey) {
                 root.album = it.album;
                 root.year = it.year;
+                root.rating = it.rating;
                 if (it.cover !== "")
                     root.cover = it.cover;
 
@@ -833,6 +853,7 @@ Item {
                 "title": root.title,
                 "album": root.album,
                 "year": root.year,
+                "rating": root.rating,
                 "cover": root.cover,
                 "coverFile": root.coverFile,
                 "playing": root.playing,

@@ -38,7 +38,7 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.9.0"
+    readonly property string buildId: "0.9.3"
     property bool popupOpen: false
     // Schedule sub-view (0.9.0): same-size swap of the popup content
     // (upcoming + current + history). Resets whenever the popup closes.
@@ -257,6 +257,7 @@ BarWidget {
                 artist: root.radio ? root.radio.artist : ""
                 album: root.radio ? root.radio.album : ""
                 year: root.radio ? root.radio.year : ""
+                rating: root.radio ? root.radio.rating : ""
                 coverFile: root.radio ? root.radio.coverFile : ""
                 cover: root.radio ? root.radio.cover : ""
                 artGate: root.popupOpen
@@ -521,6 +522,7 @@ BarWidget {
                     artist: modelData.artist
                     album: modelData.album
                     year: modelData.year
+                    rating: modelData.rating
                     timeCue: Rp.formatIn(modelData.playTime, Date.now())
                     coverFile: modelData.coverFile
                     cover: modelData.cover
@@ -545,6 +547,7 @@ BarWidget {
                 artist: root.radio ? root.radio.artist : ""
                 album: root.radio ? root.radio.album : ""
                 year: root.radio ? root.radio.year : ""
+                rating: root.radio ? root.radio.rating : ""
                 timeCue: root.playing ? "now playing" : ""
                 coverFile: root.radio ? root.radio.coverFile : ""
                 cover: root.radio ? root.radio.cover : ""
@@ -574,6 +577,7 @@ BarWidget {
                     artist: modelData.artist
                     album: modelData.album
                     year: modelData.year
+                    rating: modelData.rating
                     timeCue: Rp.formatAgo(modelData.playTime, modelData.duration, Date.now())
                     coverFile: modelData.coverFile
                     cover: modelData.cover
