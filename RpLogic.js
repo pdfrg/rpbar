@@ -72,15 +72,54 @@ function defaultQuality() {
 }
 
 function streamUrl(chan, quality) {
-  var q = String(quality || defaultQuality())
+  var q = qualityOrDefault(chan, quality)
   if (chan === 0) return streamBase + q
-  if (chan === 42) {
-    if (q === "aac-128" || q === "aac-64") return streamBase + "serenity"
-    return streamBase + "serenity-flac"
-  }
+  if (chan === 42) return q === "flac" ? streamBase + "serenity-flac" : streamBase + "serenity"
   var st = stationByChan(chan)
-  if (q.indexOf("aac-") === 0) return streamBase + st.streamName + "-" + q.substring(4)
+  if (q === "aac-320") return streamBase + st.streamName + "-320"
+  if (q === "mp3-192") return streamBase + st.streamName + "-192"
+  if (q === "flacm") return streamBase + st.streamName + "-flacm"
   return streamBase + st.streamName + "-128"
+}
+
+// Curated quality menu per station. Plain flac / non-meta ogg builds
+// are deliberately excluded: they carry zero in-stream titles, so the
+// pill would go blank until the API fills in seconds later. Serenity
+// is the exception — it has no meta build at all, so its only two
+// probed variants are offered as-is.
+function qualitiesFor(chan) {
+  if (chan === 42) return [
+    { value: "aac-64", label: "AAC 64" },
+    { value: "flac", label: "FLAC" }
+  ]
+  return [
+    { value: "aac-128", label: "AAC 128" },
+    { value: "aac-320", label: "AAC 320" },
+    { value: "mp3-192", label: "MP3 192" },
+    { value: "flacm", label: "FLAC+" }
+  ]
+}
+
+// One-line note under the popup quality row ("" = no note).
+function qualityNote(chan) {
+  if (chan === 42) return "Serenity offers 64k AAC and FLAC only."
+  return "FLAC+ carries track titles; plain FLAC is not offered."
+}
+
+// Station default when the stored quality isn't offered (e.g. aac-320
+// selected, then switched to serenity).
+function defaultQualityFor(chan) {
+  return chan === 42 ? "aac-64" : defaultQuality()
+}
+
+// Quality validated against the station menu, else the station default.
+function qualityOrDefault(chan, quality) {
+  var list = qualitiesFor(chan)
+  var q = String(quality || "")
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].value === q) return q
+  }
+  return defaultQualityFor(chan)
 }
 
 // Split an in-stream "Artist - Title" string on the first " - ".

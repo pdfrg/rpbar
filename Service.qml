@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.5.0"
+    readonly property string buildId: "0.6.0"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -157,8 +157,12 @@ Item {
         var st = Rp.stationByChan(chan);
         root.station = st.chan;
         root.paused = false;
+        // The new station may not offer the current quality (e.g. aac-320
+        // -> serenity): fall back to its default instead of failing.
+        root.quality = Rp.qualityOrDefault(root.station, root.quality);
         root.saveConfig({
-            "station": root.station
+            "station": root.station,
+            "quality": root.quality
         });
         if (!wantPlaying)
             return ;
@@ -180,6 +184,33 @@ Item {
     // selects-only while stopped.
     function stepStation(delta) {
         root.switchStation(Rp.stepChan(root.station, Number(delta) || 0));
+    }
+
+    // Quality chooser: validated against the station menu (unknown values
+    // fall back to the station default). Live switch while playing via
+    // the same respawn path as a station switch; select-only while
+    // stopped. Tapping the current quality is a no-op (avoids a pointless
+    // stream restart).
+    function setQuality(q) {
+        var nq = Rp.qualityOrDefault(root.station, q);
+        if (nq === root.quality)
+            return ;
+
+        root.quality = nq;
+        root.paused = false;
+        root.saveConfig({
+            "quality": root.quality
+        });
+        if (!wantPlaying)
+            return ;
+
+        switchingStation = true;
+        ipcSocket.connected = false;
+        player.running = false;
+        Qt.callLater(function() {
+            player.running = true;
+            root.kickIpc();
+        });
     }
 
     // (Re)connect the IPC socket to a (re)started mpv: reset the retry
@@ -353,7 +384,7 @@ Item {
             root.station = obj.station;
 
         if (typeof obj.quality === "string" && obj.quality.length > 0)
-            root.quality = obj.quality;
+            root.quality = Rp.qualityOrDefault(root.station, obj.quality);
 
         if (typeof obj.volume === "number")
             root.volume = Math.max(0, Math.min(130, Math.round(obj.volume)));
@@ -509,10 +540,16 @@ Item {
             return "ok";
         }
 
+        function setQuality(quality: string) : string {
+            root.setQuality(quality);
+            return root.quality;
+        }
+
         function nowPlaying() : string {
             return JSON.stringify({
                 "station": root.station,
                 "stationTitle": root.stationTitle,
+                "quality": root.quality,
                 "artist": root.artist,
                 "title": root.title,
                 "album": root.album,

@@ -29,7 +29,8 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
   per-station abbreviations MM/ML/R/G/B/S/K). Detection is per-bar
   and switches live when the bar layout changes.
 - Right-click the pill: popup with now-playing (Title / Artist /
-  Album (Year)) + cover, 7 stations, transport with prev/next-station
+  Album (Year)) + cover, 7 stations, a quality row (AAC 128 / AAC 320 /
+  MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
   dial, and a track-notifications toggle (on by default). Clicking
   the current station does nothing; Stop is the stop path.
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).

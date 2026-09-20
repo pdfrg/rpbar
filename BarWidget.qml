@@ -35,7 +35,7 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.5.0"
+    readonly property string buildId: "0.6.0"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -404,6 +404,62 @@ BarWidget {
                             root.radio.stepStation(1);
 
                     }
+                }
+
+            }
+
+            Column {
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                    text: "QUALITY"
+                    color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.letterSpacing: 2
+                    font.bold: true
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: Style.space(6)
+
+                    Repeater {
+                        model: Rp.qualitiesFor(root.radio ? root.radio.station : 0)
+
+                        delegate: Button {
+                            required property var modelData
+                            readonly property bool current: root.radio ? root.radio.quality === modelData.value : false
+
+                            text: modelData.label
+                            selected: current
+                            foreground: root.bar.foreground
+                            horizontalPadding: Style.spacing.controlPaddingX
+                            verticalPadding: Style.spacing.controlPaddingY
+                            onClicked: {
+                                // Tapping the current quality is a no-op:
+                                // re-selecting it would only restart the
+                                // stream (setQuality guards this too).
+                                if (root.radio && root.radio.quality !== modelData.value)
+                                    root.radio.setQuality(modelData.value);
+
+                            }
+                        }
+
+                    }
+
+                }
+
+                Text {
+                    text: root.radio ? Rp.qualityNote(root.radio.station) : ""
+                    textFormat: Text.PlainText
+                    color: root.bar ? Qt.darker(root.bar.foreground, 2) : "grey"
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                    width: parent.width
+                    visible: text !== ""
                 }
 
             }
