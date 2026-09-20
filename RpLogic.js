@@ -115,6 +115,69 @@ function defaultQualityFor(chan) {
   return chan === 42 ? "aac-64" : defaultQuality()
 }
 
+// Volume clamp shared by slider, wheel, and CLI (mpv ceiling 130).
+function clampVolume(v) {
+  var n = Math.round(Number(v))
+  if (!isFinite(n)) return 70
+  return Math.max(0, Math.min(130, n))
+}
+
+// Per-station persisted maps ({chan: value}). Unknown/missing entries fall
+// back; volumes clamp, qualities validate against the station menu.
+function volumeFor(map, chan, fallback) {
+  var fb = clampVolume(fallback === undefined ? 70 : fallback)
+  if (!map || typeof map !== "object") return fb
+  var v = map[String(chan)]
+  if (v === undefined) v = map[chan]
+  if (v === undefined) return fb
+  return clampVolume(v)
+}
+
+function qualityForStation(map, chan, fallback) {
+  var fb = qualityOrDefault(chan, fallback)
+  if (!map || typeof map !== "object") return fb
+  var q = map[String(chan)]
+  if (q === undefined) q = map[chan]
+  if (q === undefined || q === null || q === "") return fb
+  return qualityOrDefault(chan, q)
+}
+
+// Large cover URL for the R-click art viewer: same numeric id as any
+// s/m/l cover, always the l (500px) variant. Anything else -> "".
+function largeCoverUrl(u) {
+  var id = coverId(u)
+  if (id === "") return ""
+  var abs = "https://img.radioparadise.com/covers/l/" + id + ".jpg"
+  return isAllowedImageUrl(abs) ? abs : ""
+}
+
+// /tmp path for the one-shot large-art download (session-only, never the
+// bar/toast cache file). "" when the cover has no usable id.
+function largeArtTmpPath(u) {
+  var id = coverId(u)
+  return id === "" ? "" : "/tmp/rpbar-large-" + id + ".jpg"
+}
+
+// Ceiling minutes until sleepAt (0 = none/elapsed). Companions with
+// sleepLabel for strings that read better without "left".
+function sleepMins(sleepAtMs, nowMs) {
+  var end = Number(sleepAtMs)
+  var now = Number(nowMs)
+  if (!(end > 0) || !(now >= 0)) return 0
+  return Math.max(0, Math.ceil((end - now) / 60000))
+}
+
+// Sleep countdown label for the popup ("12 min left" / ""). "" when no
+// timer or already elapsed.
+function sleepLabel(sleepAtMs, nowMs) {
+  var end = Number(sleepAtMs)
+  var now = Number(nowMs)
+  if (!(end > 0) || !(now >= 0)) return ""
+  var mins = Math.ceil((end - now) / 60000)
+  if (mins <= 0) return ""
+  return mins + " min left"
+}
+
 // Quality validated against the station menu, else the station default.
 function qualityOrDefault(chan, quality) {
   var list = qualitiesFor(chan)
