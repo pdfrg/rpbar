@@ -7,9 +7,9 @@
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 DST="$HOME/.config/omarchy/plugins/io.github.pdfrg.rpbar"
-mkdir -p "$DST"
+/usr/bin/mkdir -p "$DST"
 
-EXPECT=$(grep -o 'buildId: "[^"]*"' "$SRC/Service.qml" | head -1 | cut -d'"' -f2)
+EXPECT=$(/usr/bin/grep -o 'buildId: "[^"]*"' "$SRC/Service.qml" | /usr/bin/head -1 | /usr/bin/cut -d'"' -f2)
 
 # A reused buildId makes the check below vacuous (old code reporting
 # the same id looks "reloaded"). Refuse unless the live shell reports
@@ -29,19 +29,21 @@ if [ -n "$EXPECT" ] && [ "${1:-}" != "--force" ]; then
   fi
 fi
 
-CHANGES=$(rsync -ai --delete \
+CHANGES=$(/usr/bin/rsync -ai --delete \
   --exclude .git/ \
   --exclude scripts/ \
   --exclude PLAN.md \
   --exclude AGENTS.md \
+  --exclude fixes.txt \
+  --exclude initial-ideas.txt \
   --exclude project-outline.txt \
-  "$SRC/" "$DST/" | wc -l)
+  "$SRC/" "$DST/" | /usr/bin/wc -l)
 
 # Surface the restart result on mismatch: a lock-gated refusal (exit 1
 # with "Refusing to restart ... while the session is locked") otherwise
 # looks identical to a still-starting shell, which cost a debug session.
 RESTART_MSG=$(omarchy restart shell 2>&1 || true)
-sleep 10
+/usr/bin/sleep 10
 GOT=$($CALL 2>/dev/null || true)
 if [ "$GOT" = "$EXPECT" ]; then
   echo "installed $SRC -> $DST ($CHANGES files, build $GOT live)"

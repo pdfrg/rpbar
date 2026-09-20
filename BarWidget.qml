@@ -38,7 +38,7 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.10.4"
+    readonly property string buildId: "0.10.5"
     property bool popupOpen: false
     // Summon shell (D2 stage 1): Bar.findPanelWidget requires open() +
     // close() functions and opened !== undefined on the widget root, then

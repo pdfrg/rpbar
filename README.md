@@ -1,14 +1,28 @@
 # rpbar
 
+[![Built for Omarchy: Plugin](https://raw.githubusercontent.com/tcballard/omarchy-badges/75975e5b5bf75e7ede3764bcd2950046f7abfe2c/badges/v1/omarchy-plugin.svg)](https://github.com/tcballard/omarchy-badges)
+
 Omarchy 4 (Quickshell) plugin for [Radio Paradise](https://radioparadise.com):
 7 stations streamed via mpv, with MPRIS so the built-in media widget stays
 in the loop.
 
-Status: track metadata (stream + RP API), cached cover art, rich
-track-change notifications, 3-line popup, schedule sub-view (up next +
-recently played, pre-fetched with art), average RP user ratings.
+Track metadata (stream + RP API), cached cover art, rich track-change
+notifications, 3-line popup, schedule sub-view (up next + recently played,
+pre-fetched with art), average RP user ratings.
+
+![rpbar popup](preview.jpg)
 
 ## Install
+
+From the Omarchy plugin marketplace:
+
+```sh
+omarchy plugin add https://github.com/pdfrg/rpbar --enable
+```
+
+To update: `omarchy plugin update io.github.pdfrg.rpbar`.
+
+From source (development):
 
 ```sh
 ./scripts/install.sh
@@ -20,7 +34,8 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 
 ## Use
 
-- Left-click the pill: play / stop (note glyph = playing, 󰒲 = playing
+- Left-click the pill: play / stop (note glyph = playing, sleep glyph =
+  playing
   with a sleep timer running — the hover tooltip shows its countdown).
   Pausing
   via media keys / the media widget shows a dimmed triangle; clicking
@@ -39,7 +54,7 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
    MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
    dial, volume slider (0–130, per-station memory; right-click slider or
    `m` to mute; mouse wheel on the pill adjusts volume too),
-   and a track-notifications toggle (on by default). The 󰒲 button in the
+   and a track-notifications toggle (on by default). The sleep button in the
    popup header (highlighted while a timer runs) swaps to a same-size
    sleep view: Off / 15 / 30 / 60 with a live countdown (session-only —
    cancelled if you stop or switch stations). Clicking
@@ -73,6 +88,21 @@ album line (omarchy renders at most 3 notification body lines). Covers cache to
 revisits are instant. Notifications fire once per track when
 enrichment lands, with the cached art attached.
 
+## Keys
+
+Bind the popup (add to `~/.config/hypr/bindings.lua`):
+
+```lua
+o.bind("SUPER + SHIFT + ALT + R", "rpbar", "omarchy-shell shell toggle io.github.pdfrg.rpbar")
+```
+
+(`SUPER+CTRL+R/N/P` are taken by reminder/nightlight/power;
+`SUPER+SHIFT+R` is a common TUI slot. `SUPER+SHIFT+ALT+N/P` pair well
+as next/prev station via `omarchy-shell io.github.pdfrg.rpbar stepStation 1` /
+`stepStation -1`.) Inside the popup:
+`1-7` switch station, `Up/Down` dial, `Space/Enter` play/stop, `m` mute,
+`Tab` hops to the neighboring panel, `Esc` closes.
+
 ## Configure
 
 `~/.config/rpbar/config.json` (created on first save):
@@ -102,6 +132,52 @@ To force notifications off regardless of the popup toggle, add
 `"pillWidthMode": "grow"` and `"pillMaxWidth": <pixels>` as hard
 overrides for the track-pill width behavior.
 
+## Dependencies
+
+rpbar shells out to tools that are present on a standard Omarchy install.
+It installs nothing itself — no package installs, no downloads outside
+Radio Paradise, no services or timers:
+
+| Tool | Purpose |
+|---|---|
+| `/usr/bin/mpv` (+ system mpv-mpris) | audio engine; MPRIS for the media widget and media keys |
+| `/usr/bin/curl` | Radio Paradise API (`api.radioparadise.com`) and cover art (`img.radioparadise.com`), all bounded (`--max-time`, `--max-filesize`, no redirect-following) |
+| `/usr/bin/notify-send` | track-change and status toasts (static strings + sanitized metadata, argv-only) |
+| `/usr/share/omarchy/bin/omarchy-launch-browser` | open the station's Radio Paradise page |
+| `/usr/bin/xdg-open` | open large (500px) cover art in the image viewer |
+| `/usr/bin/{mkdir,cat,ls,tail,xargs,rm,pkill}` | cache/state dir setup, bounded art-cache trim, stale-socket cleanup at startup |
+
+Network use is Radio Paradise only (`stream` / `api` / `img`
+`.radioparadise.com`, https): the audio stream itself, a 12 s
+`now_playing` enrichment poll while playing, event-driven schedule
+fetches (`/play` block + history), and cover-art downloads. No login,
+no credentials, no telemetry. Details in [`SECURITY.md`](SECURITY.md).
+
+## Data & state
+
+- `~/.config/rpbar/config.json` — own config (station, quality, volume,
+  notification + pill preferences). Hand-edits need `omarchy restart shell`.
+- `~/.cache/rpbar/art/` — cover thumbnails (newest 50 kept).
+- `~/.cache/rpbar/large/` — one-shot large art for the image viewer.
+- `$XDG_RUNTIME_DIR/mpv/rpbar-socket` — mpv JSON IPC socket (runtime only).
+- `~/.config/omarchy/shell.json` — optional per-widget overrides
+  (`trackNotifications`, `pillWidthMode`, `pillMaxWidth`); your file,
+  only read, extended solely with keys you add yourself.
+- `~/.config/hypr/bindings.lua` — only the keybinding lines you add yourself.
+
+## Removal
+
+Stop playback first, then:
+
+```sh
+omarchy plugin remove io.github.pdfrg.rpbar
+rm -rf ~/.config/rpbar ~/.cache/rpbar   # optional: own state
+```
+
+then delete the rpbar lines from `~/.config/hypr/bindings.lua` and undo
+any `shell.json` widget overrides. No services, timers, or packages to
+clean up — nothing outside the paths above is ever touched.
+
 ## Develop
 
 ```sh
@@ -124,14 +200,11 @@ omarchy-shell io.github.pdfrg.rpbar playStation '{"station":1,"quality":"flacm"}
 ```
 
 Keyboard: `omarchy-shell shell summon|toggle|hide io.github.pdfrg.rpbar`
-opens the popup on the focused monitor (bind e.g. `SUPER+SHIFT+ALT+R` to
-`shell toggle ...` — `SUPER+CTRL+R/N/P` are taken by reminder/nightlight/
-power; `SUPER+SHIFT+R` is a common TUI slot. `SUPER+SHIFT+ALT+N/P` pair
-well as next/prev station via
-`omarchy-shell io.github.pdfrg.rpbar stepStation 1` /
-`stepStation -1`). Inside the popup:
-`1-7` switch station, `Up/Down` dial, `Space/Enter` play/stop, `m` mute,
-`Tab` hops to the neighboring panel, `Esc` closes. Mouse wheel on the
-pill adjusts volume (±5/notch, per-station memory). Right-click a cover
-for the large (500px) art in the image viewer; left-click still opens
-the station page.
+opens the popup on the focused monitor (see Keys above for bindings).
+Mouse wheel on the pill adjusts volume (±5/notch, per-station memory).
+Right-click a cover for the large (500px) art in the image viewer;
+left-click still opens the station page.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

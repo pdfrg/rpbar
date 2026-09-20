@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.10.4"
+    readonly property string buildId: "0.10.5"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -113,7 +113,17 @@ Item {
     // album/year/cover come from now_playing, polled while playing and
     // applied only when the API agrees with the stream's identity (a
     // mid-transition disagreement keeps last-good values, never blanks).
+    // API transport guardrails (marketplace hardening): no `-L` anywhere —
+    // every RP endpoint answers directly (verified live), so a 3xx fails
+    // closed instead of following. `--fail` drops error bodies;
+    // `--max-filesize` bounds the pipe (live sizes: now_playing ~0.3 KB,
+    // /play ~12-15 KB, list ~14-24 KB); the apply* handlers also refuse
+    // over-long text before JSON.parse (see maxApiText).
     readonly property string apiBase: "https://api.radioparadise.com/api"
+    // Second-layer bound on API response text before JSON.parse (the curl
+    // --max-filesize flags are the first layer; this caps StdioCollector
+    // text however it arrived). 1 MiB is ~4x the largest capped endpoint.
+    readonly property int maxApiText: 1.04858e+06
     readonly property int apiPollInterval: 12000
     // Track-change notification: stream identity only (album/cover arrive
     // seconds later via enrichment). Fires while playing with the toggle
@@ -139,6 +149,10 @@ Item {
     // from Rp.coverId, never from raw URL text.
     readonly property string artDir: home + "/.cache/rpbar/art"
     readonly property int artCacheKeep: 50
+    // One-shot large-art downloads land here (own cache dir, never /tmp:
+    // a predictable /tmp name is plantable as a symlink that curl -o
+    // would follow). The filename is still digits-only (Rp.coverId).
+    readonly property string largeArtDir: home + "/.cache/rpbar/large"
     property string coverFile: ""
     // Schedule (0.9.0): upcoming from the /play block, history from
     // nowplaying_list_v2022. blockItems is the raw block (current +
@@ -380,7 +394,7 @@ Item {
         if (!Rp.isAllowedLinkUrl(url))
             return ;
 
-        Quickshell.execDetached(["omarchy-launch-browser", url]);
+        Quickshell.execDetached(["/usr/share/omarchy/bin/omarchy-launch-browser", url]);
     }
 
     function maybeToast() {
@@ -417,9 +431,9 @@ Item {
         // NotificationCard elides past maximumLineCount 3), rating folded
         // into the last line so it is never the cut-off 4th.
         var lines = Rp.toastLines(root.title, root.artist, root.album, root.year, root.rating);
-        var args = ["notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", lines.join("\n")];
+        var args = ["/usr/bin/notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", lines.join("\n")];
         if (root.coverFile !== "")
-            args = ["notify-send", "-a", "Radio Paradise", "-e", "-i", root.coverFile.substring("file://".length), "--", "Radio Paradise", lines.join("\n")];
+            args = ["/usr/bin/notify-send", "-a", "Radio Paradise", "-e", "-i", root.coverFile.substring("file://".length), "--", "Radio Paradise", lines.join("\n")];
 
         Quickshell.execDetached(args);
     }
@@ -432,7 +446,7 @@ Item {
         if (root.restartAttempts >= 5) {
             wantPlaying = false;
             root.buffering = false;
-            Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "Stream dropped", "Gave up reconnecting -- press play to retry."]);
+            Quickshell.execDetached(["/usr/bin/notify-send", "-a", "Radio Paradise", "Stream dropped", "Gave up reconnecting -- press play to retry."]);
             return ;
         }
         root.restartAttempts++;
@@ -512,6 +526,11 @@ Item {
     }
 
     function setVolume(v) {
+        // Non-numeric input (e.g. garbage over IPC) is ignored, never a
+        // reset: clampVolume's fallback would otherwise jump to 70.
+        if (!isFinite(Number(v)))
+            return ;
+
         var nv = Rp.clampVolume(v);
         root.volume = nv;
         if (root.muted && nv > 0)
@@ -568,22 +587,22 @@ Item {
     }
 
     // Large album art (C5): derive the l (500px) variant of any s/m/l
-    // cover and fetch it one-shot to /tmp (never the bar/toast cache
-    // file, which stays 200px m). Opened with xdg-open (image viewer),
-    // never omarchy-launch-browser (browser-only). Placeholder/evil
-    // covers are gated to a no-op by Rp.largeCoverUrl.
+    // cover and fetch it one-shot to the large-art cache dir (never the
+    // bar/toast cache file, which stays 200px m). Opened with xdg-open
+    // (image viewer), never omarchy-launch-browser (browser-only).
+    // Placeholder/evil covers are gated to a no-op by Rp.largeCoverUrl.
     function openLargeArt() {
         root.openLargeArtFor(root.cover);
     }
 
     function openLargeArtFor(url) {
         var big = Rp.largeCoverUrl(url);
-        var tmp = Rp.largeArtTmpPath(url);
+        var tmp = Rp.largeArtTmpPath(url, root.largeArtDir);
         if (big === "" || tmp === "")
             return ;
 
         largeArtProc.wantPath = tmp;
-        largeArtProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "1048576", "-A", "rpbar/" + root.buildId, "-o", tmp, big];
+        largeArtProc.command = ["/usr/bin/curl", "-sS", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "1048576", "-A", "rpbar/" + root.buildId, "-o", tmp, big];
         largeArtProc.running = true;
     }
 
@@ -663,7 +682,7 @@ Item {
             return ;
 
         apiProc.reqChan = root.station;
-        apiProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/now_playing?chan=" + root.station];
+        apiProc.command = ["/usr/bin/curl", "-sS", "--fail", "--max-time", "10", "--max-filesize", "32768", "-A", "rpbar/" + root.buildId, root.apiBase + "/now_playing?chan=" + root.station];
         apiProc.running = true;
         // Block-gap latch (rptui pattern): while the stream sits on the
         // last known block song — or past its scheduled end — the next
@@ -681,9 +700,13 @@ Item {
         if (reqChan !== root.station || !root.playing)
             return ;
 
+        var raw = String(text || "");
+        if (raw.length > root.maxApiText)
+            return ;
+
         var data = null;
         try {
-            data = JSON.parse(String(text || ""));
+            data = JSON.parse(raw);
         } catch (e) {
             return ;
         }
@@ -731,7 +754,7 @@ Item {
         root.blockRefetch();
         if (!listProc.running) {
             listProc.reqChan = root.station;
-            listProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/nowplaying_list_v2022?chan=" + root.station];
+            listProc.command = ["/usr/bin/curl", "-sS", "--fail", "--max-time", "10", "--max-filesize", "262144", "-A", "rpbar/" + root.buildId, root.apiBase + "/nowplaying_list_v2022?chan=" + root.station];
             listProc.running = true;
         }
     }
@@ -741,7 +764,7 @@ Item {
             return ;
 
         blockProc.reqChan = root.station;
-        blockProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/play?event=0&elapsed=1&bitrate=3&action=start&info=true&chan=" + root.station];
+        blockProc.command = ["/usr/bin/curl", "-sS", "--fail", "--max-time", "10", "--max-filesize", "262144", "-A", "rpbar/" + root.buildId, root.apiBase + "/play?event=0&elapsed=1&bitrate=3&action=start&info=true&chan=" + root.station];
         blockProc.running = true;
     }
 
@@ -757,7 +780,11 @@ Item {
         if (reqChan !== root.station)
             return ;
 
-        var res = Rp.parseBlock(text);
+        var braw = String(text || "");
+        if (braw.length === 0 || braw.length > root.maxApiText)
+            return ;
+
+        var res = Rp.parseBlock(braw);
         if (res.items.length === 0)
             return ;
 
@@ -804,9 +831,13 @@ Item {
         if (reqChan !== root.station)
             return ;
 
+        var hraw = String(text || "");
+        if (hraw.length === 0 || hraw.length > root.maxApiText)
+            return ;
+
         var data = null;
         try {
-            data = JSON.parse(String(text || ""));
+            data = JSON.parse(hraw);
         } catch (e) {
             return ;
         }
@@ -814,7 +845,7 @@ Item {
             return ;
 
         root.lastApiOkAt = Date.now();
-        root.historyItems = Rp.parsePlaylist(text, root.streamKey, 6);
+        root.historyItems = Rp.parsePlaylist(hraw, root.streamKey, 6);
         root.histFetchedAt = Date.now();
         root.queueArtForSchedule();
     }
@@ -937,7 +968,7 @@ Item {
         // enqueued twice concurrently.
         artDlProc.wantId = wantId;
         artDlProc.wantPath = wantPath;
-        artDlProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "524288", "-A", "rpbar/" + root.buildId, "-o", wantPath, String(wantUrl)];
+        artDlProc.command = ["/usr/bin/curl", "-sS", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "524288", "-A", "rpbar/" + root.buildId, "-o", wantPath, String(wantUrl)];
         artDlProc.running = true;
     }
 
@@ -1150,7 +1181,7 @@ Item {
     Process {
         id: player
 
-        command: ["mpv", "--no-video", "--no-terminal", "--idle=yes", "--input-ipc-server=" + root.socketPath, "--volume=" + root.volume, root.muted ? "--mute=yes" : "--mute=no", "--title=Radio Paradise", root.currentUrl]
+        command: ["/usr/bin/mpv", "--no-video", "--no-terminal", "--idle=yes", "--input-ipc-server=" + root.socketPath, "--volume=" + root.volume, root.muted ? "--mute=yes" : "--mute=no", "--title=Radio Paradise", root.currentUrl]
         onExited: {
             if (root.switchingStation) {
                 root.switchingStation = false;
@@ -1350,7 +1381,7 @@ Item {
     Process {
         id: dirSetup
 
-        command: ["/usr/bin/mkdir", "-p", root.configDir, root.socketDir, root.artDir]
+        command: ["/usr/bin/mkdir", "-p", root.configDir, root.socketDir, root.artDir, root.largeArtDir]
         running: false
     }
 
@@ -1359,7 +1390,7 @@ Item {
     Process {
         id: orphanProc
 
-        command: ["/usr/bin/sh", "-c", "pkill -f 'mpv.*rpbar-sock[e]t' 2>/dev/null; /bin/rm -f \"$SOCK\""]
+        command: ["/usr/bin/sh", "-c", "/usr/bin/pkill -f 'mpv.*rpbar-sock[e]t' 2>/dev/null; /bin/rm -f \"$SOCK\""]
         environment: {
             "SOCK": root.socketPath,
             "PATH": "/usr/bin:/bin"
@@ -1383,13 +1414,14 @@ Item {
                 root.sleepMinutes = 0;
                 stop();
                 root.stop();
-                Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", "Sleep timer — playback stopped."]);
+                Quickshell.execDetached(["/usr/bin/notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", "Sleep timer — playback stopped."]);
             }
         }
     }
 
-    // Large-art one-shot (C5): bounded curl to /tmp, then xdg-open in the
-    // image viewer. Never touches the bar/toast cache file.
+    // Large-art one-shot (C5): bounded curl to the large-art cache dir,
+    // then xdg-open in the image viewer. Never touches the bar/toast
+    // cache file.
     Process {
         id: largeArtProc
 
@@ -1397,7 +1429,7 @@ Item {
 
         onExited: function(exitCode, exitStatus) {
             if (exitCode === 0 && largeArtProc.wantPath !== "")
-                Quickshell.execDetached(["xdg-open", largeArtProc.wantPath]);
+                Quickshell.execDetached(["/usr/bin/xdg-open", largeArtProc.wantPath]);
 
         }
     }

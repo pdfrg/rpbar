@@ -151,11 +151,16 @@ function largeCoverUrl(u) {
   return isAllowedImageUrl(abs) ? abs : ""
 }
 
-// /tmp path for the one-shot large-art download (session-only, never the
-// bar/toast cache file). "" when the cover has no usable id.
-function largeArtTmpPath(u) {
+// One-shot large-art download path (session viewer, never the bar/toast
+// cache file). dir is the caller's own cache dir ("/tmp" default); the
+// filename is digits-only from coverId, so no traversal is possible.
+// "" when the cover has no usable id.
+function largeArtTmpPath(u, dir) {
   var id = coverId(u)
-  return id === "" ? "" : "/tmp/rpbar-large-" + id + ".jpg"
+  if (id === "") return ""
+  var d = String(dir || "/tmp")
+  if (d.charAt(d.length - 1) === "/") d = d.substring(0, d.length - 1)
+  return d + "/rpbar-large-" + id + ".jpg"
 }
 
 // Ceiling minutes until sleepAt (0 = none/elapsed). Companions with

@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 
 qmlformat -i BarWidget.qml Service.qml TrackRow.qml
 qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Service.qml TrackRow.qml
+omarchy plugin validate .
 node --check RpLogic.js
 node --input-type=module -e "
 import fs from 'fs';
@@ -155,7 +156,9 @@ assert.equal(Rp.largeCoverUrl('https://img.radioparadise.com/covers/s/2.jpg'), '
 assert.equal(Rp.largeCoverUrl('https://evil.com/x.jpg'), '');
 assert.equal(Rp.largeCoverUrl(''), '');
 assert.equal(Rp.largeArtTmpPath('https://img.radioparadise.com/covers/m/10141.jpg'), '/tmp/rpbar-large-10141.jpg');
-assert.equal(Rp.largeArtTmpPath('https://evil.com/x.jpg'), '');
+assert.equal(Rp.largeArtTmpPath('https://img.radioparadise.com/covers/m/10141.jpg', '/home/u/.cache/rpbar/large'), '/home/u/.cache/rpbar/large/rpbar-large-10141.jpg');
+assert.equal(Rp.largeArtTmpPath('https://img.radioparadise.com/covers/m/10141.jpg', '/home/u/.cache/rpbar/large/'), '/home/u/.cache/rpbar/large/rpbar-large-10141.jpg');
+assert.equal(Rp.largeArtTmpPath('https://evil.com/x.jpg', '/home/u/.cache/rpbar/large'), '');
 assert.equal(Rp.sleepLabel(Date.now() + 12 * 60000, Date.now()), '12 min left');
 assert.equal(Rp.sleepLabel(0, Date.now()), '');
 assert.equal(Rp.sleepLabel(Date.now() - 60000, Date.now()), '');
