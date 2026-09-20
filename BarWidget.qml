@@ -38,8 +38,11 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.8.0"
+    readonly property string buildId: "0.9.0"
     property bool popupOpen: false
+    // Schedule sub-view (0.9.0): same-size swap of the popup content
+    // (upcoming + current + history). Resets whenever the popup closes.
+    property bool historyOpen: false
 
     function buildInfo() {
         return root.buildId;
@@ -63,6 +66,11 @@ BarWidget {
         }
     }
 
+    onPopupOpenChanged: {
+        if (!popupOpen)
+            historyOpen = false;
+
+    }
     moduleName: "io.github.pdfrg.rpbar"
     // Per-widget shell.json settings flow to the shared service.
     onRadioChanged: syncSettings()
@@ -189,133 +197,70 @@ BarWidget {
         owner: root
         open: root.popupOpen
         contentWidth: popup.fittedContentWidth(Style.space(340))
-        contentHeight: popup.fittedContentHeight(column.implicitHeight)
+        // Both views share this box: the history column is fixed-height
+        // (6 rows), so swapping views never re-anchors the popup.
+        contentHeight: popup.fittedContentHeight(Math.max(mainColumn.implicitHeight, histColumn.implicitHeight))
 
         Column {
-            id: column
+            id: mainColumn
 
             anchors.fill: parent
             spacing: Style.space(12)
-
-            Text {
-                text: "RADIO PARADISE"
-                color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 2
-                font.bold: true
-            }
+            visible: !root.historyOpen
 
             Row {
-                spacing: Style.space(10)
                 width: parent.width
+                spacing: Style.space(8)
+
+                Text {
+                    id: mainCaption
+
+                    text: "RADIO PARADISE"
+                    color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.letterSpacing: 2
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
 
                 Item {
-                    width: Style.space(64)
-                    height: Style.space(64)
-                    clip: true
-
-                    Image {
-                        id: artImage
-
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        // Cached file first (instant reopen, offline);
-                        // remote while the first fetch lands. Gated on
-                        // popup-open so a closed popup never fetches.
-                        sourceSize.width: Style.space(128)
-                        sourceSize.height: Style.space(128)
-                        source: root.popupOpen ? (root.radio && (root.radio.coverFile || root.radio.cover) ? (root.radio.coverFile || root.radio.cover) : "") : (root.radio && root.radio.coverFile ? root.radio.coverFile : "")
-                        visible: status === Image.Ready
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: artImage.status !== Image.Ready
-                        text: "󰝚"
-                        color: root.bar ? root.bar.foreground : "white"
-                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                        font.pixelSize: Style.font.displayLarge
-                    }
-
-                    // Clickable cover: opens this station's RP player page
-                    // (now playing, bio, lyrics, comments). Works on the
-                    // placeholder too -- the page needs no track.
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        acceptedButtons: Qt.LeftButton
-                        onClicked: {
-                            if (root.radio)
-                                root.radio.openPlayerPage();
-
-                        }
-                    }
-
+                    width: Math.max(0, parent.width - mainCaption.implicitWidth - histButton.width - parent.spacing * 2)
+                    height: 1
                 }
 
-                Column {
-                    spacing: Style.space(2)
-                    width: parent.width - Style.space(74)
+                // Schedule sub-view entry: upcoming + current + history
+                // in the same-size box (no re-anchor glitch).
+                Button {
+                    id: histButton
+
+                    iconText: "󰥔"
+                    foreground: root.bar.foreground
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
                     anchors.verticalCenter: parent.verticalCenter
+                    onClicked: {
+                        if (root.radio)
+                            root.radio.viewSchedule();
 
-                    // Media-widget parity: Title / Artist / Album (Year).
-                    Text {
-                        text: root.buffering ? "Buffering…" : (root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in"))
-                        textFormat: Text.PlainText
-                        color: root.bar ? root.bar.foreground : "white"
-                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                        font.pixelSize: Style.font.subtitle
-                        font.bold: true
-                        elide: Text.ElideRight
-                        width: parent.width
+                        root.historyOpen = true;
                     }
-
-                    Text {
-                        text: root.radio ? root.radio.artist : ""
-                        textFormat: Text.PlainText
-                        color: root.bar ? Qt.darker(root.bar.foreground, 1.3) : "grey"
-                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                        font.pixelSize: Style.font.bodySmall
-                        elide: Text.ElideRight
-                        width: parent.width
-                        visible: text !== ""
-                    }
-
-                    Row {
-                        id: albumRow
-
-                        spacing: Style.space(4)
-                        width: parent.width
-                        visible: root.radio && root.radio.album !== ""
-
-                        Text {
-                            text: root.radio ? root.radio.album : ""
-                            textFormat: Text.PlainText
-                            color: root.bar ? Qt.darker(root.bar.foreground, 1.6) : "grey"
-                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                            font.pixelSize: Style.font.caption
-                            elide: Text.ElideRight
-                            width: Math.max(0, albumRow.width - (yearText.visible ? yearText.implicitWidth + albumRow.spacing : 0))
-                        }
-
-                        Text {
-                            id: yearText
-
-                            text: root.radio && root.radio.year ? "(" + root.radio.year + ")" : ""
-                            textFormat: Text.PlainText
-                            color: root.bar ? Qt.darker(root.bar.foreground, 2) : "grey"
-                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                            font.pixelSize: Style.font.caption
-                            visible: text !== ""
-                        }
-
-                    }
-
                 }
 
+            }
+
+            // Media-widget parity: Title / Artist / Album (Year).
+            TrackRow {
+                bar: root.bar
+                radio: root.radio
+                headline: root.buffering ? "Buffering…" : (root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in"))
+                artist: root.radio ? root.radio.artist : ""
+                album: root.radio ? root.radio.album : ""
+                year: root.radio ? root.radio.year : ""
+                coverFile: root.radio ? root.radio.coverFile : ""
+                cover: root.radio ? root.radio.cover : ""
+                artGate: root.popupOpen
+                isCurrent: true
             }
 
             Repeater {
@@ -325,7 +270,7 @@ BarWidget {
                     required property var modelData
                     readonly property bool current: root.radio ? root.radio.station === modelData.chan : false
 
-                    width: column.width
+                    width: mainColumn.width
                     height: stationRow.implicitHeight + Style.space(8)
                     radius: Style.cornerRadius
                     color: current ? Style.hoverFillFor(root.bar.foreground, Color.accent) : "transparent"
@@ -509,6 +454,141 @@ BarWidget {
                         root.radio.setPillWidthMode(root.scrollMode ? "grow" : "scroll");
 
                 }
+            }
+
+        }
+
+        // Schedule sub-view (0.9.0): upcoming (block, with "in X min"
+        // cues) + current (accent edge bar) + history ("N min ago"),
+        // all in the same TrackRow presentation. Fixed 6 rows total so
+        // this column never exceeds the main column: the shared popup
+        // box above never resizes on swap.
+        Column {
+            id: histColumn
+
+            readonly property int upcomingCount: root.radio ? root.radio.upcomingItems.length : 0
+            readonly property int historyCount: root.radio ? root.radio.historyItems.length : 0
+            readonly property int historyShown: Math.max(0, Math.min(histColumn.historyCount, 5 - histColumn.upcomingCount))
+
+            anchors.fill: parent
+            spacing: Style.space(12)
+            visible: root.historyOpen
+
+            Row {
+                width: parent.width
+                spacing: Style.space(8)
+
+                Button {
+                    iconText: "󰅖"
+                    foreground: root.bar.foreground
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: root.historyOpen = false
+                }
+
+                Text {
+                    text: "SCHEDULE"
+                    color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.letterSpacing: 2
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+            }
+
+            Text {
+                text: "UP NEXT"
+                color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 2
+                font.bold: true
+                visible: histColumn.upcomingCount > 0
+            }
+
+            Repeater {
+                model: root.radio ? root.radio.upcomingItems.slice(0, 3) : []
+
+                delegate: TrackRow {
+                    required property var modelData
+
+                    bar: root.bar
+                    radio: root.radio
+                    headline: modelData.title || "—"
+                    artist: modelData.artist
+                    album: modelData.album
+                    year: modelData.year
+                    timeCue: Rp.formatIn(modelData.playTime, Date.now())
+                    coverFile: modelData.coverFile
+                    cover: modelData.cover
+                    artGate: root.popupOpen
+                }
+
+            }
+
+            Text {
+                text: "NOW"
+                color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 2
+                font.bold: true
+            }
+
+            TrackRow {
+                bar: root.bar
+                radio: root.radio
+                headline: root.buffering ? "Buffering…" : (root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in"))
+                artist: root.radio ? root.radio.artist : ""
+                album: root.radio ? root.radio.album : ""
+                year: root.radio ? root.radio.year : ""
+                timeCue: root.playing ? "now playing" : ""
+                coverFile: root.radio ? root.radio.coverFile : ""
+                cover: root.radio ? root.radio.cover : ""
+                artGate: root.popupOpen
+                isCurrent: true
+            }
+
+            Text {
+                text: "RECENTLY PLAYED"
+                color: root.bar ? Qt.darker(root.bar.foreground, 1.5) : "grey"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 2
+                font.bold: true
+                visible: histColumn.historyShown > 0
+            }
+
+            Repeater {
+                model: root.radio ? root.radio.historyItems.slice(0, histColumn.historyShown) : []
+
+                delegate: TrackRow {
+                    required property var modelData
+
+                    bar: root.bar
+                    radio: root.radio
+                    headline: modelData.title || "—"
+                    artist: modelData.artist
+                    album: modelData.album
+                    year: modelData.year
+                    timeCue: Rp.formatAgo(modelData.playTime, modelData.duration, Date.now())
+                    coverFile: modelData.coverFile
+                    cover: modelData.cover
+                    artGate: root.popupOpen
+                }
+
+            }
+
+            Text {
+                text: "No schedule yet — press play."
+                textFormat: Text.PlainText
+                color: root.bar ? Qt.darker(root.bar.foreground, 2) : "grey"
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                visible: histColumn.upcomingCount === 0 && histColumn.historyCount === 0 && (!root.radio || root.radio.schedChan === -1)
             }
 
         }

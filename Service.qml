@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.8.0"
+    readonly property string buildId: "0.9.0"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -107,6 +107,28 @@ Item {
     readonly property string artDir: home + "/.cache/rpbar/art"
     readonly property int artCacheKeep: 50
     property string coverFile: ""
+    // Schedule (0.9.0): upcoming from the /play block, history from
+    // nowplaying_list_v2022. blockItems is the raw block (current +
+    // upcoming, schedule order); upcomingItems is the splitSchedule view
+    // (max 3); historyItems is past-only, current excluded (max 5).
+    // Entries are Rp.scheduleEntry objects; coverFile is stamped in by
+    // the art queue as downloads land (slice-reassign notifies views).
+    property var blockItems: []
+    property var upcomingItems: []
+    property var historyItems: []
+    property string schedBlockId: ""
+    property int schedChan: -1
+    property double blockFetchedAt: 0
+    property double histFetchedAt: 0
+    // Scheduled end of the last known block song (sched+duration, ms
+    // epoch). Drives the block-gap refetch latch in pollEnrichment.
+    property double blockEndMs: 0
+    // Art pre-cache queue: cover ids (Rp.coverId strings), current
+    // first, then upcoming, then history. artQueued dedupes within a
+    // pass; the marker is cleared on completion so later fetches retry.
+    property var artQueue: []
+    property var artQueued: ({
+    })
 
     // IPC freshness probe: omarchy-shell io.github.pdfrg.rpbar buildInfo
     // (NOT `shell call ...`: that only routes to panel/overlay/menu
@@ -166,6 +188,14 @@ Item {
         var st = Rp.stationByChan(chan);
         root.station = st.chan;
         root.paused = false;
+        // A new station means a new schedule: drop the old block/history
+        // (wrong-station data is worse than none) until the fetch lands.
+        root.blockItems = [];
+        root.upcomingItems = [];
+        root.historyItems = [];
+        root.schedBlockId = "";
+        root.schedChan = -1;
+        root.blockEndMs = 0;
         // The new station may not offer the current quality (e.g. aac-320
         // -> serenity): fall back to its default instead of failing.
         root.quality = Rp.qualityOrDefault(root.station, root.quality);
@@ -224,10 +254,12 @@ Item {
 
     // (Re)connect the IPC socket to a (re)started mpv: reset the retry
     // budget and let ipcRetryTimer do the attempts. Called on every path
-    // that starts mpv (play, station switch, stream-drop restart).
+    // that starts mpv (play, station switch, stream-drop restart). Also
+    // refreshes the schedule (block + history + art URLs in one shot).
     function kickIpc() {
         ipcRetryTimer.attempts = 0;
         ipcRetryTimer.restart();
+        root.fetchSchedule();
     }
 
     // Stream-first metadata: mpv's `metadata` property carries the ICY
@@ -247,6 +279,12 @@ Item {
         root.year = "";
         root.cover = "";
         root.coverFile = "";
+        // Fast path: the new track may already be prefetched as upcoming
+        // (with album/year/art from the block) — enrich + toast instantly
+        // instead of waiting for the light poll. Then refresh the
+        // schedule: the block position moved and history grew by one.
+        root.applyBlockMatch();
+        root.fetchSchedule();
     }
 
     // Persisted notification preference (popup toggle). shell.json
@@ -469,6 +507,16 @@ Item {
         apiProc.reqChan = root.station;
         apiProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/now_playing?chan=" + root.station];
         apiProc.running = true;
+        // Block-gap latch (rptui pattern): while the stream sits on the
+        // last known block song — or past its scheduled end — the next
+        // block may have been released, so refetch it and keep upcoming
+        // live. Scoped to the gap window; quiet the rest of the time.
+        if (!blockProc.running && root.schedChan === root.station && root.blockItems.length > 0 && root.streamKey !== "") {
+            var last = root.blockItems[root.blockItems.length - 1];
+            if (Rp.entryKey(last) === root.streamKey || (root.blockEndMs > 0 && Date.now() > root.blockEndMs - 90000))
+                root.blockRefetch();
+
+        }
     }
 
     function applyEnrichment(text, reqChan) {
@@ -513,49 +561,218 @@ Item {
         return id === "" ? "" : root.artDir + "/" + id + ".jpg";
     }
 
+    // Schedule fetch (0.9.0): the /play block (current + upcoming with
+    // sched_time_millis, ~10KB, no auth) and nowplaying_list_v2022
+    // (20-song history, ~24KB). Event-driven only — never on a timer —
+    // so a bar widget can't become a poll loop. bitrate=3 is rptui's
+    // default; the audio URLs are ignored (we stream), only metadata.
+    function fetchSchedule() {
+        root.blockRefetch();
+        if (!listProc.running) {
+            listProc.reqChan = root.station;
+            listProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/nowplaying_list_v2022?chan=" + root.station];
+            listProc.running = true;
+        }
+    }
+
+    function blockRefetch() {
+        if (blockProc.running)
+            return ;
+
+        blockProc.reqChan = root.station;
+        blockProc.command = ["/usr/bin/curl", "-sS", "-L", "--max-time", "10", "-A", "rpbar/" + root.buildId, root.apiBase + "/play?event=0&elapsed=1&bitrate=3&action=start&info=true&chan=" + root.station];
+        blockProc.running = true;
+    }
+
+    // Popup entry point: refresh only when stale or foreign-station.
+    function viewSchedule() {
+        var now = Date.now();
+        if (root.schedChan !== root.station || now - root.blockFetchedAt > 60000 || now - root.histFetchedAt > 60000)
+            root.fetchSchedule();
+
+    }
+
+    function applyBlock(text, reqChan) {
+        if (reqChan !== root.station)
+            return ;
+
+        var res = Rp.parseBlock(text);
+        if (res.items.length === 0)
+            return ;
+
+        root.blockItems = res.items;
+        root.schedBlockId = res.blockId;
+        root.schedChan = reqChan;
+        root.blockFetchedAt = Date.now();
+        var last = res.items[res.items.length - 1];
+        root.blockEndMs = last.playTime > 0 ? last.playTime + (last.duration > 0 ? last.duration : 240000) : 0;
+        root.upcomingItems = Rp.splitSchedule(res.items, root.streamKey, Date.now(), 3);
+        // The new block may already describe the playing track (or the
+        // track that just announced) — enrich from it immediately.
+        root.applyBlockMatch();
+        root.queueArtForSchedule();
+    }
+
+    // Enrich the current track from the prefetched block when the block
+    // agrees with the stream identity. Same gate semantics as the light
+    // poll (identity match or nothing); idempotent, so the light poll
+    // landing later changes nothing. Returns true on a match.
+    function applyBlockMatch() {
+        if (root.streamKey === "" || root.schedChan !== root.station)
+            return false;
+
+        for (var i = 0; i < root.blockItems.length; i++) {
+            var it = root.blockItems[i];
+            if (Rp.entryKey(it) === root.streamKey) {
+                root.album = it.album;
+                root.year = it.year;
+                if (it.cover !== "")
+                    root.cover = it.cover;
+
+                root.fetchCoverFile();
+                root.maybeToast();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function applyHistory(text, reqChan) {
+        if (reqChan !== root.station)
+            return ;
+
+        root.historyItems = Rp.parsePlaylist(text, root.streamKey, 5);
+        root.histFetchedAt = Date.now();
+        root.queueArtForSchedule();
+    }
+
     function fetchCoverFile() {
-        var id = Rp.coverId(root.cover);
-        if (id === "") {
+        if (Rp.coverId(root.cover) === "") {
             root.coverFile = "";
             return ;
         }
-        // Single-flight: the 12 s poll re-fires this for the current
-        // track, so a skipped attempt retries shortly. Never kill a
-        // download in flight (that would leave a partial file).
+        // Already resolved: nothing to do (avoids re-queueing every
+        // 12 s poll for the current track).
+        if (root.coverFile === root.coverFileFor(Rp.coverId(root.cover)))
+            return ;
+
+        // Current track jumps the queue; the pump serializes the rest.
+        root.queueArt(root.cover, true);
+    }
+
+    // Enqueue one cover URL (front = current track priority). Dupes
+    // within a pass are dropped via artQueued; the marker clears on
+    // completion so later schedule fetches can retry failed downloads.
+    // Queue items keep their own URL: cover sizes (s/m/l) share a cache
+    // id but are different downloads.
+    function queueArt(url, front) {
+        var id = Rp.coverId(url);
+        if (id === "" || root.artQueued[id])
+            return ;
+
+        root.artQueued[id] = true;
+        if (front)
+            root.artQueue.unshift({
+            "id": id,
+            "url": String(url)
+        });
+        else
+            root.artQueue.push({
+            "id": id,
+            "url": String(url)
+        });
+        root.pumpArtQueue();
+    }
+
+    // Pre-cache art for the visible schedule, priority-ordered: current,
+    // then upcoming in play order, then history. Cached files resolve
+    // instantly through the existence probe; misses download bounded.
+    function queueArtForSchedule() {
+        root.queueArt(root.cover, true);
+        for (var u = 0; u < root.upcomingItems.length; u++) {
+            if (root.upcomingItems[u].coverFile === "")
+                root.queueArt(root.upcomingItems[u].cover, false);
+
+        }
+        for (var h = 0; h < root.historyItems.length; h++) {
+            if (root.historyItems[h].coverFile === "")
+                root.queueArt(root.historyItems[h].cover, false);
+
+        }
+    }
+
+    function pumpArtQueue() {
         if (artCheckProc.running || artDlProc.running)
             return ;
 
-        // Existence probe by exit code (no output collected): 0 means
-        // the revisit fast path, anything else a bounded download.
-        var path = root.coverFileFor(id);
-        artCheckProc.wantPath = path;
-        artCheckProc.command = ["/bin/cat", path];
+        if (root.artQueue.length === 0)
+            return ;
+
+        var head = root.artQueue.shift();
+        artCheckProc.wantId = head.id;
+        artCheckProc.wantPath = root.coverFileFor(head.id);
+        artCheckProc.wantUrl = head.url;
+        artCheckProc.command = ["/bin/cat", artCheckProc.wantPath];
         artCheckProc.running = true;
     }
 
-    function onArtCheckDone(exitOk, wantPath) {
-        if (wantPath !== root.coverFileFor(Rp.coverId(root.cover)))
-            return ;
+    // Stamp a landed cover file onto every holder (current + schedule)
+    // and nudge the views. Stale completions (id no longer referenced)
+    // change nothing.
+    function stampArt(id, fileUrl) {
+        var touched = false;
+        if (Rp.coverId(root.cover) === id && root.coverFile !== fileUrl) {
+            root.coverFile = fileUrl;
+            // Current-track art landed after enrichment: the deferred
+            // toast fires now (with art), and the popup picks it up live.
+            root.maybeToast();
+            touched = true;
+        }
+        for (var b = 0; b < root.blockItems.length; b++) {
+            if (Rp.coverId(root.blockItems[b].cover) === id && root.blockItems[b].coverFile !== fileUrl) {
+                root.blockItems[b].coverFile = fileUrl;
+                touched = true;
+            }
+        }
+        for (var h = 0; h < root.historyItems.length; h++) {
+            if (Rp.coverId(root.historyItems[h].cover) === id && root.historyItems[h].coverFile !== fileUrl) {
+                root.historyItems[h].coverFile = fileUrl;
+                touched = true;
+            }
+        }
+        // upcomingItems aliases blockItems entries; reassigning both
+        // arrays notifies the Repeaters (fresh delegates, cached images).
+        if (touched) {
+            root.upcomingItems = root.upcomingItems.slice();
+            root.historyItems = root.historyItems.slice();
+        }
+    }
 
+    function onArtCheckDone(exitOk, wantPath, wantId, wantUrl) {
+        // wantId/path/url were paired at pump time. A stale completion
+        // (e.g. station switched mid-flight) simply matches no holder in
+        // stampArt and changes nothing.
         if (exitOk) {
-            root.coverFile = "file://" + wantPath;
+            delete root.artQueued[wantId];
+            root.stampArt(wantId, "file://" + wantPath);
+            root.pumpArtQueue();
             return ;
         }
+        // Cache miss: bounded download of the queued URL (never a fresh
+        // property read — the schedule may have moved on). The queued
+        // marker stays until the download completes, so the id can't be
+        // enqueued twice concurrently.
+        artDlProc.wantId = wantId;
         artDlProc.wantPath = wantPath;
-        artDlProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "524288", "-A", "rpbar/" + root.buildId, "-o", wantPath, String(root.cover)];
+        artDlProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "524288", "-A", "rpbar/" + root.buildId, "-o", wantPath, String(wantUrl)];
         artDlProc.running = true;
     }
 
-    function onArtDownloaded(exitOk, wantPath) {
-        if (wantPath !== root.coverFileFor(Rp.coverId(root.cover)))
-            return ;
+    function onArtDownloaded(exitOk, wantPath, wantId) {
+        delete root.artQueued[wantId];
+        if (exitOk)
+            root.stampArt(wantId, "file://" + wantPath);
 
-        if (exitOk) {
-            root.coverFile = "file://" + wantPath;
-            // Art landed after enrichment: the deferred toast fires now
-            // (with art), and the popup picks the file up live.
-            root.maybeToast();
-        }
         // Trim to the newest artCacheKeep files. Names are our own
         // <digits>.jpg writes, so the pipeline can't escape the dir.
         artTrimProc.command = ["/usr/bin/sh", "-c", "cd \"$ART_DIR\" 2>/dev/null && /bin/ls -t *.jpg 2>/dev/null | /usr/bin/tail -n +51 | /usr/bin/xargs -r /usr/bin/rm --"];
@@ -564,6 +781,7 @@ Item {
             "PATH": "/usr/bin:/bin"
         };
         artTrimProc.running = true;
+        root.pumpArtQueue();
     }
 
     Component.onCompleted: {
@@ -622,6 +840,18 @@ Item {
                 "buffering": root.buffering,
                 "pillWidthMode": root.pillWidthMode,
                 "pillMaxWidth": root.pillMaxWidth
+            });
+        }
+
+        // Schedule plane (0.9.0): current block id + upcoming/history
+        // entries for popup verification without clicking.
+        function schedule() : string {
+            return JSON.stringify({
+                "station": root.station,
+                "blockId": root.schedBlockId,
+                "streamKey": root.streamKey,
+                "upcoming": root.upcomingItems,
+                "history": root.historyItems
             });
         }
 
@@ -771,26 +1001,57 @@ Item {
 
     }
 
-    // Art-cache workers (see fetchCoverFile). Single-flight per worker
-    // via the wantPath guard: a stale completion whose path no longer
-    // matches the current track is dropped, never applied.
+    // Schedule workers (0.9.0): block = current + upcoming, list =
+    // history. Single-flight each via fetchSchedule's running guards; a
+    // stale completion whose chan no longer matches is dropped.
+    Process {
+        id: blockProc
+
+        property int reqChan: -1
+
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.applyBlock(text, blockProc.reqChan)
+        }
+
+    }
+
+    Process {
+        id: listProc
+
+        property int reqChan: -1
+
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.applyHistory(text, listProc.reqChan)
+        }
+
+    }
+
+    // Art-cache workers (see queueArt/pumpArtQueue). Serialized through
+    // the queue: one check/download at a time, never killed mid-flight
+    // (that would leave a partial file). A stale completion whose id no
+    // longer matches any holder is dropped, never applied.
     Process {
         id: artCheckProc
 
+        property string wantId: ""
         property string wantPath: ""
+        property string wantUrl: ""
 
         onExited: function(exitCode, exitStatus) {
-            root.onArtCheckDone(exitCode === 0, artCheckProc.wantPath);
+            root.onArtCheckDone(exitCode === 0, artCheckProc.wantPath, artCheckProc.wantId, artCheckProc.wantUrl);
         }
     }
 
     Process {
         id: artDlProc
 
+        property string wantId: ""
         property string wantPath: ""
 
         onExited: function(exitCode, exitStatus) {
-            root.onArtDownloaded(exitCode === 0, artDlProc.wantPath);
+            root.onArtDownloaded(exitCode === 0, artDlProc.wantPath, artDlProc.wantId);
         }
     }
 

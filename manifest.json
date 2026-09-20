@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.pdfrg.rpbar",
   "name": "rpbar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "pdfrg",
   "license": "MIT",
   "description": "Radio Paradise streams for the Omarchy bar (7 stations, mpv + MPRIS)",

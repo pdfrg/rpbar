@@ -5,7 +5,8 @@ Omarchy 4 (Quickshell) plugin for [Radio Paradise](https://radioparadise.com):
 in the loop.
 
 Status: track metadata (stream + RP API), cached cover art, rich
-track-change notifications, 3-line popup.
+track-change notifications, 3-line popup, schedule sub-view (up next +
+recently played, pre-fetched with art).
 
 ## Install
 
@@ -39,6 +40,15 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
   the cover opens the station's Radio Paradise page (now playing,
   bio, lyrics, comments) in the default browser — pause rpbar first
   if your browser autoplays the web player.
+- The clock button in the popup header swaps to a same-size schedule
+  view: UP NEXT (up to 3 upcoming songs from the station's announced
+  block, with "in X min" cues), NOW (the playing track, accent-barred),
+  and RECENTLY PLAYED (history filling the 6 fixed rows, with "N min
+  ago" cues). Same art + 3-line rows throughout; ✕ returns to the main
+  view. Upcoming art is pre-fetched, so track-change notifications land
+  instantly with art instead of waiting for a download. Near the end of
+  a block the view may briefly show no upcoming songs while the next
+  block is awaited (usually under 2 minutes).
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).
   Prev/next keys have no stream meaning (single-item playlist) and do
   nothing — use the popup dial to change stations.
@@ -47,7 +57,8 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
   from our side (verified against mpv-mpris source).
 
 Track info is stream-first (ICY title over mpv IPC) with album / year /
-cover filled in from the RP API seconds later. Covers cache to
+cover filled in from the RP API seconds later — or instantly when the
+track was pre-announced in the station block. Covers cache to
 `~/.cache/rpbar/art/` (kept to the newest 50) so popup reopens and
 revisits are instant. Notifications fire once per track when
 enrichment lands, with the cached art attached.
@@ -87,8 +98,10 @@ overrides for the track-pill width behavior.
 ./check
 ./scripts/install.sh
 omarchy-shell io.github.pdfrg.rpbar buildInfo
+omarchy-shell io.github.pdfrg.rpbar schedule
 ```
 
 (`shell call <id> ...` only routes to panel/overlay/menu loaders — this
 plugin is service + bar-widget, so it exposes its own `IpcHandler` target
-instead, with `play` / `stop` / `toggle` / `switchStation <chan>` too.)
+instead, with `play` / `stop` / `toggle` / `switchStation <chan>` /
+`schedule` too.)

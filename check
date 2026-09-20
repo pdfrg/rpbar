@@ -3,14 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-qmlformat -i BarWidget.qml Service.qml
-qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Service.qml
+qmlformat -i BarWidget.qml Service.qml TrackRow.qml
+qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Service.qml TrackRow.qml
 node --check RpLogic.js
 node --input-type=module -e "
 import fs from 'fs';
 import assert from 'node:assert/strict';
 const src = fs.readFileSync('RpLogic.js', 'utf8');
-const Rp = new Function(src + '; return {stations,stationByChan,stepChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality,stationShort,pillText,qualitiesFor,defaultQualityFor,qualityOrDefault,qualityNote,playerPageUrl,isAllowedLinkUrl};')();
+const Rp = new Function(src + '; return {stations,stationByChan,stepChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality,stationShort,pillText,qualitiesFor,defaultQualityFor,qualityOrDefault,qualityNote,playerPageUrl,isAllowedLinkUrl,resolveCoverUrl,scheduleEntry,entryKey,parseBlock,splitSchedule,parsePlaylist,formatIn,formatAgo};')();
 assert.equal(Rp.stations().length, 7);
 assert.equal(Rp.streamUrl(0), 'https://stream.radioparadise.com/aac-128');
 assert.equal(Rp.streamUrl(1), 'https://stream.radioparadise.com/mellow-128');
@@ -73,6 +73,51 @@ assert.equal(Rp.isAllowedLinkUrl('https://img.radioparadise.com/covers/m/1.jpg')
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com/covers/l/1.jpg'), true);
 assert.equal(Rp.isAllowedImageUrl('http://img.radioparadise.com/x.jpg'), false);
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com.evil.com/x'), false);
+assert.equal(Rp.resolveCoverUrl('covers/m/2.jpg', '//img.radioparadise.com/'), 'https://img.radioparadise.com/covers/m/2.jpg');
+assert.equal(Rp.resolveCoverUrl('covers/l/1.jpg', 'https://img.radioparadise.com/'), 'https://img.radioparadise.com/covers/l/1.jpg');
+assert.equal(Rp.resolveCoverUrl('https://img.radioparadise.com/covers/m/1.jpg', ''), 'https://img.radioparadise.com/covers/m/1.jpg');
+assert.equal(Rp.resolveCoverUrl('https://evil.com/x.jpg', ''), '');
+assert.equal(Rp.resolveCoverUrl('http://img.radioparadise.com/x.jpg', ''), '');
+assert.equal(Rp.resolveCoverUrl('foo/bar.jpg', 'https://img.radioparadise.com/'), '');
+assert.equal(Rp.resolveCoverUrl('', ''), '');
+const blockObj = { block_id: 1549, image_base: '//img.radioparadise.com/', song: {
+  '0': { artist: 'A0', title: 'T0', album: 'AL0', year: '2020', cover_medium: 'covers/m/1.jpg', song_id: '10', sched_time_millis: 1000, duration: 200000, event: '100' },
+  '1': { artist: 'A1', title: 'T1', album: 'AL1', year: '2021', cover_medium: 'covers/m/2.jpg', song_id: '11', sched_time_millis: 201000, duration: 200000, event: '101' },
+  '2': { artist: 'A2', title: 'T2', album: 'AL2', year: '2022', cover_small: 'covers/s/3.jpg', song_id: '12', sched_time_millis: 401000, duration: 200000, event: '102' },
+  '3': { artist: 'Evil', title: 'X', album: 'AL3', year: '2023', cover_medium: 'https://evil.com/x.jpg', song_id: '13', sched_time_millis: 601000, duration: 200000, event: '103' } } };
+const pb = Rp.parseBlock(JSON.stringify(blockObj));
+assert.equal(pb.blockId, '1549');
+assert.equal(pb.items.length, 4);
+assert.equal(pb.items[1].cover, 'https://img.radioparadise.com/covers/m/2.jpg');
+assert.equal(pb.items[3].cover, '');
+assert.equal(Rp.coverId(pb.items[1].cover), '2');
+assert.equal(Rp.entryKey(pb.items[0]), 'A0\nT0');
+assert.deepEqual(Rp.splitSchedule(pb.items, 'A1\nT1', 150000, 3).map((e) => e.title), ['T2', 'X']);
+assert.deepEqual(Rp.splitSchedule(pb.items, 'Nobody\nNothing', 300000, 3).map((e) => e.title), ['T2', 'X']);
+assert.equal(Rp.splitSchedule(pb.items, 'A0\nT0', 500, 2).length, 2);
+assert.deepEqual(Rp.splitSchedule([], 'A\nT', 0, 3), []);
+assert.deepEqual(Rp.parseBlock('garbage'), { blockId: '', items: [] });
+assert.deepEqual(Rp.parseBlock('{\"song\":{}}'), { blockId: '', items: [] });
+const listObj = { cover_base_url: 'https://img.radioparadise.com/', song: [
+  { artist: 'A1', title: 'T1', album: 'AL1', year: '2021', cover_med: 'covers/m/2.jpg', song_id: '11', play_time: 201000, duration: 200000, event: '101' },
+  { artist: 'A0', title: 'T0', album: 'AL0', year: '2020', cover: 'covers/l/1.jpg', song_id: '10', play_time: 1000, duration: 200000, event: '100' },
+  { artist: 'Bad Bidi', title: 'T', album: '', year: '', cover_small: 'covers/s/9.jpg', song_id: '9', play_time: 500, duration: 1000, event: '99' } ] };
+const pl = Rp.parsePlaylist(JSON.stringify(listObj), 'A1\nT1', 5);
+assert.equal(pl.length, 2);
+assert.equal(pl[0].title, 'T0');
+assert.equal(pl[0].cover, 'https://img.radioparadise.com/covers/l/1.jpg');
+assert.equal(pl[1].artist, 'BadBidi');
+assert.deepEqual(Rp.parsePlaylist('nope', 'A\nT', 5), []);
+assert.equal(Rp.formatIn(150000 + 90 * 1000, 150000), 'in 1 min');
+assert.equal(Rp.formatIn(150000 + 3700 * 1000, 150000), 'in 1 h 1 min');
+assert.equal(Rp.formatIn(150000 + 7200 * 1000, 150000), 'in 2 h');
+assert.equal(Rp.formatIn(150000 + 30 * 1000, 150000), 'starting soon');
+assert.equal(Rp.formatIn(1000, 150000), 'now');
+assert.equal(Rp.formatIn('', 150000), '');
+assert.equal(Rp.formatAgo(1000, 200000, 1000 + 200000 + 155000), '2 min ago');
+assert.equal(Rp.formatAgo(1000, 200000, 1000 + 200000 + 20000), 'just now');
+assert.equal(Rp.formatAgo(1000, 3600000, 1000 + 3600000 + 7500000), '2 h 5 min ago');
+assert.equal(Rp.formatAgo('', 0, 150000), '');
 console.log('RpLogic tests ok');
 "
 echo "check ok"

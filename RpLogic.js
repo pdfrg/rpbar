@@ -133,8 +133,7 @@ function playerPageUrl(chan) {
 
 // Allow-list for browsable links before any browser launch. https only,
 // RP page host only (mirrors isAllowedImageUrl).
-function isAllowedLinkUrl(u) {
-  var s = String(u || "")
+function isAllowedLinkUrl(u) {  var s = String(u || "")
   if (s.indexOf("https://") !== 0) return false
   var hosts = [
     "https://radioparadise.com/",
@@ -159,10 +158,12 @@ function splitArtistTitle(s) {
 }
 
 // Sanitize untrusted text (stream metadata, API fields) before display:
-// strip C0/C1 controls + bidi overrides, trim, cap length.
+// strip C0/C1 controls + bidi overrides + line/paragraph separators
+// (U+2028/29 break even single-line Text, wrecking fixed row heights),
+// trim, cap length.
 function sanitizeText(s, maxLen) {
   var cap = maxLen > 0 ? maxLen : 256
-  var t = String(s || "").replace(/[\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+  var t = String(s || "").replace(/[\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, "")
   t = t.trim()
   if (t.length > cap) t = t.substring(0, cap)
   return t
@@ -197,4 +198,142 @@ function isAllowedImageUrl(u) {
     if (s.indexOf(hosts[i]) === 0) return true
   }
   return false
+}
+
+// ---- Schedule (0.9.0): upcoming via /play block, history via list ----
+
+// Absolute https cover URL from a possibly-relative path + base. base is
+// cover_base_url ("https://img.../") or image_base ("//img.../").
+// Relative paths must look like covers/x/N.jpg; anything else -> "".
+// The result still has to pass isAllowedImageUrl.
+function resolveCoverUrl(path, base) {
+  var p = String(path || "")
+  if (p === "") return ""
+  if (p.indexOf("https://") === 0) return isAllowedImageUrl(p) ? p : ""
+  if (!/^covers\//.test(p)) return ""
+  var b = String(base || "")
+  if (b.indexOf("//") === 0) b = "https:" + b
+  if (b.indexOf("https://") !== 0) return ""
+  if (b.charAt(b.length - 1) !== "/") b += "/"
+  if (p.charAt(0) === "/") p = p.substring(1)
+  var abs = b + p
+  return isAllowedImageUrl(abs) ? abs : ""
+}
+
+// One normalized schedule entry shared by block + list parsing.
+// coverFile is filled in later by the Service art pipeline ("" = none).
+function scheduleEntry(artist, title, album, year, coverUrl, songId, playTimeMs, durationMs, eventId) {
+  return {
+    artist: sanitizeText(artist, 128),
+    title: sanitizeText(title, 256),
+    album: sanitizeText(album, 256),
+    year: sanitizeText(year, 16),
+    cover: String(coverUrl || ""),
+    songId: String(songId === undefined || songId === null ? "" : songId),
+    playTime: Number(playTimeMs) || 0,
+    duration: Number(durationMs) || 0,
+    event: String(eventId === undefined || eventId === null ? "" : eventId),
+    coverFile: ""
+  }
+}
+
+// Identity of a schedule entry, comparable to Service streamKey
+// (artist + "\n" + title, both sanitized).
+function entryKey(e) {
+  if (!e || typeof e !== "object") return "\n"
+  return sanitizeText(e.artist, 128) + "\n" + sanitizeText(e.title, 256)
+}
+
+// /play block shape: {block_id, image_base, song: {"0": {...}, ...}}.
+// Block songs use cover_medium/cover_small/cover_large (+cover) and
+// sched_time_millis. Never throws; malformed -> {blockId:"", items:[]}.
+function parseBlock(text) {
+  var data = null
+  try { data = JSON.parse(String(text || "")) } catch (e) { return { blockId: "", items: [] } }
+  if (!data || typeof data !== "object") return { blockId: "", items: [] }
+  var songs = data.song
+  if (!songs || typeof songs !== "object") return { blockId: "", items: [] }
+  var keys = []
+  for (var k in songs) {
+    if (songs[k] && typeof songs[k] === "object" && isFinite(Number(k))) keys.push(Number(k))
+  }
+  keys.sort(function(a, b) { return a - b })
+  var items = []
+  for (var i = 0; i < keys.length; i++) {
+    var s = songs[String(keys[i])]
+    var cover = resolveCoverUrl(s.cover_medium || s.cover_med || s.cover_small || s.cover || s.cover_large, data.image_base)
+    items.push(scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.sched_time_millis, s.duration, s.event))
+  }
+  return { blockId: String(data.block_id === undefined || data.block_id === null ? "" : data.block_id), items: items }
+}
+
+// Split block items into upcoming relative to the stream identity.
+// A block song matching streamKey is the current one; songs after it are
+// upcoming. No match (block gap) -> items still scheduled in the future.
+// maxN caps the result; nowMs injectable for tests.
+function splitSchedule(items, streamKey, nowMs, maxN) {
+  var list = items || []
+  var cap = maxN > 0 ? maxN : 3
+  var now = Number(nowMs) || 0
+  var idx = -1
+  for (var i = 0; i < list.length; i++) {
+    if (entryKey(list[i]) === streamKey) { idx = i; break }
+  }
+  var out = []
+  for (var j = idx + 1; j < list.length && out.length < cap; j++) {
+    if (idx === -1 && !(list[j].playTime > now)) continue
+    out.push(list[j])
+  }
+  return out
+}
+
+// nowplaying_list_v2022 shape: {song: [{...}], cover_base_url}.
+// History = entries NOT matching streamKey (current excluded), capped.
+// List songs use cover/cover_med/cover_small + play_time (ms epoch).
+// Never throws; malformed -> [].
+function parsePlaylist(text, streamKey, maxN) {
+  var data = null
+  try { data = JSON.parse(String(text || "")) } catch (e) { return [] }
+  if (!data || typeof data !== "object") return []
+  var songs = data.song
+  if (!songs || typeof songs.length !== "number") return []
+  var cap = maxN > 0 ? maxN : 5
+  var out = []
+  for (var i = 0; i < songs.length && out.length < cap; i++) {
+    var s = songs[i]
+    if (!s || typeof s !== "object") continue
+    var cover = resolveCoverUrl(s.cover_med || s.cover_small || s.cover || s.cover_large, data.cover_base_url)
+    var e = scheduleEntry(s.artist, s.title, s.album, s.year, cover, s.song_id, s.play_time, s.duration, s.event)
+    if (entryKey(e) === streamKey) continue
+    out.push(e)
+  }
+  return out
+}
+
+// Relative cue for upcoming rows: "in 3 min" / "in 1 h 5 min" /
+// "starting soon" / "now". "" when the schedule time is missing.
+function formatIn(schedMs, nowMs) {
+  var sched = Number(schedMs)
+  var now = Number(nowMs)
+  if (!(sched > 0) || !(now >= 0)) return ""
+  var d = sched - now
+  if (d <= 0) return "now"
+  var mins = Math.floor(d / 60000)
+  if (mins < 1) return "starting soon"
+  if (mins < 60) return "in " + mins + " min"
+  var h = Math.floor(mins / 60), m = mins % 60
+  return m === 0 ? "in " + h + " h" : "in " + h + " h " + m + " min"
+}
+
+// Relative cue for history rows from end-of-play: "just now" /
+// "25 min ago" / "2 h 5 min ago". "" when play time is missing.
+function formatAgo(playMs, durMs, nowMs) {
+  var play = Number(playMs)
+  var now = Number(nowMs)
+  if (!(play > 0) || !(now >= 0)) return ""
+  var mins = Math.floor((now - (play + (Number(durMs) || 0))) / 60000)
+  if (!(mins >= 1)) return "just now"
+  if (mins < 60) return mins + " min ago"
+  var h = Math.floor(mins / 60), m = mins % 60
+  return m === 0 ? h + " h ago" : h + " h " + m + " min ago"
 }
