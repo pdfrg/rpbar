@@ -7,16 +7,19 @@
 // from RP's CMS and are NOT hardcodable (see PLAN.md §1).
 
 // Station catalog: chan numbers are the RP API ids (list_chan); titles
-// are the API titles; streamName feeds the per-channel URL builder.
+// are the API titles; streamName feeds the per-channel URL builder;
+// playerSlug feeds the clickable-art station page (identical to the
+// website slugs today, kept as its own field so a future RP rename of
+// one can't silently break the other).
 function stations() {
   return [
-    { chan: 0, slug: "main-mix", streamName: "main-mix", title: "The Main Mix" },
-    { chan: 1, slug: "mellow", streamName: "mellow", title: "Mellow Mix" },
-    { chan: 2, slug: "rock", streamName: "rock", title: "RockIt!" },
-    { chan: 3, slug: "global", streamName: "global", title: "The Globe" },
-    { chan: 5, slug: "beyond", streamName: "beyond", title: "Beyond..." },
-    { chan: 42, slug: "serenity", streamName: "serenity", title: "Serenity" },
-    { chan: 945, slug: "kfat", streamName: "kfat", title: "KFAT" }
+    { chan: 0, slug: "main-mix", streamName: "main-mix", playerSlug: "main-mix", title: "The Main Mix" },
+    { chan: 1, slug: "mellow", streamName: "mellow", playerSlug: "mellow", title: "Mellow Mix" },
+    { chan: 2, slug: "rock", streamName: "rock", playerSlug: "rock", title: "RockIt!" },
+    { chan: 3, slug: "global", streamName: "global", playerSlug: "global", title: "The Globe" },
+    { chan: 5, slug: "beyond", streamName: "beyond", playerSlug: "beyond", title: "Beyond..." },
+    { chan: 42, slug: "serenity", streamName: "serenity", playerSlug: "serenity", title: "Serenity" },
+    { chan: 945, slug: "kfat", streamName: "kfat", playerSlug: "kfat", title: "KFAT" }
   ]
 }
 
@@ -120,6 +123,27 @@ function qualityOrDefault(chan, quality) {
     if (list[i].value === q) return q
   }
   return defaultQualityFor(chan)
+}
+
+// Station player page for clickable album art (verified against the RP
+// website; unknown chans fall back to the Main Mix).
+function playerPageUrl(chan) {
+  return "https://radioparadise.com/player/info/" + stationByChan(chan).playerSlug
+}
+
+// Allow-list for browsable links before any browser launch. https only,
+// RP page host only (mirrors isAllowedImageUrl).
+function isAllowedLinkUrl(u) {
+  var s = String(u || "")
+  if (s.indexOf("https://") !== 0) return false
+  var hosts = [
+    "https://radioparadise.com/",
+    "https://www.radioparadise.com/"
+  ]
+  for (var i = 0; i < hosts.length; i++) {
+    if (s.indexOf(hosts[i]) === 0) return true
+  }
+  return false
 }
 
 // Split an in-stream "Artist - Title" string on the first " - ".

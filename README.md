@@ -35,7 +35,10 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
   Album (Year)) + cover, 7 stations, a quality row (AAC 128 / AAC 320 /
   MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
   dial, and a track-notifications toggle (on by default). Clicking
-  the current station does nothing; Stop is the stop path.
+  the current station does nothing; Stop is the stop path. Clicking
+  the cover opens the station's Radio Paradise page (now playing,
+  bio, lyrics, comments) in the default browser — pause rpbar first
+  if your browser autoplays the web player.
 - The stream answers to media keys via MPRIS (mpv-mpris autoloads).
   Prev/next keys have no stream meaning (single-item playlist) and do
   nothing — use the popup dial to change stations.

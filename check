@@ -10,7 +10,7 @@ node --input-type=module -e "
 import fs from 'fs';
 import assert from 'node:assert/strict';
 const src = fs.readFileSync('RpLogic.js', 'utf8');
-const Rp = new Function(src + '; return {stations,stationByChan,stepChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality,stationShort,pillText,qualitiesFor,defaultQualityFor,qualityOrDefault,qualityNote};')();
+const Rp = new Function(src + '; return {stations,stationByChan,stepChan,streamUrl,splitArtistTitle,sanitizeText,notifySafe,coverId,isAllowedImageUrl,defaultQuality,stationShort,pillText,qualitiesFor,defaultQualityFor,qualityOrDefault,qualityNote,playerPageUrl,isAllowedLinkUrl};')();
 assert.equal(Rp.stations().length, 7);
 assert.equal(Rp.streamUrl(0), 'https://stream.radioparadise.com/aac-128');
 assert.equal(Rp.streamUrl(1), 'https://stream.radioparadise.com/mellow-128');
@@ -57,6 +57,19 @@ assert.equal(Rp.streamUrl(42, 'flac'), 'https://stream.radioparadise.com/serenit
 assert.equal(Rp.streamUrl(42, 'aac-320'), 'https://stream.radioparadise.com/serenity');
 assert.equal(Rp.qualityNote(42), 'Serenity offers 64k AAC and FLAC only.');
 assert.equal(Rp.qualityNote(0), 'FLAC+ carries track titles; plain FLAC is not offered.');
+assert.equal(Rp.playerPageUrl(0), 'https://radioparadise.com/player/info/main-mix');
+assert.equal(Rp.playerPageUrl(1), 'https://radioparadise.com/player/info/mellow');
+assert.equal(Rp.playerPageUrl(2), 'https://radioparadise.com/player/info/rock');
+assert.equal(Rp.playerPageUrl(3), 'https://radioparadise.com/player/info/global');
+assert.equal(Rp.playerPageUrl(5), 'https://radioparadise.com/player/info/beyond');
+assert.equal(Rp.playerPageUrl(42), 'https://radioparadise.com/player/info/serenity');
+assert.equal(Rp.playerPageUrl(945), 'https://radioparadise.com/player/info/kfat');
+assert.equal(Rp.playerPageUrl(999), 'https://radioparadise.com/player/info/main-mix');
+assert.equal(Rp.isAllowedLinkUrl('https://radioparadise.com/player/info/rock'), true);
+assert.equal(Rp.isAllowedLinkUrl('https://www.radioparadise.com/player/info/rock'), true);
+assert.equal(Rp.isAllowedLinkUrl('http://radioparadise.com/player/info/rock'), false);
+assert.equal(Rp.isAllowedLinkUrl('https://radioparadise.com.evil.com/x'), false);
+assert.equal(Rp.isAllowedLinkUrl('https://img.radioparadise.com/covers/m/1.jpg'), false);
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com/covers/l/1.jpg'), true);
 assert.equal(Rp.isAllowedImageUrl('http://img.radioparadise.com/x.jpg'), false);
 assert.equal(Rp.isAllowedImageUrl('https://img.radioparadise.com.evil.com/x'), false);

@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.7.0"
+    readonly property string buildId: "0.8.0"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -278,6 +278,20 @@ Item {
         root.saveConfig({
             "pillMaxWidth": root.pillMaxWidth
         });
+    }
+
+    // Clickable album art: open this station's RP player page (now
+    // playing, bio, lyrics, comments) in the default browser. The URL is
+    // app-constructed and allow-listed; launched argv-only via
+    // omarchy-launch-browser (correct app-scope + Hyprland focus), never
+    // a shell string. Note: the web player may autoplay depending on the
+    // browser's autoplay setting -- see README.
+    function openPlayerPage() {
+        var url = Rp.playerPageUrl(root.station);
+        if (!Rp.isAllowedLinkUrl(url))
+            return ;
+
+        Quickshell.execDetached(["omarchy-launch-browser", url]);
     }
 
     function maybeToast() {

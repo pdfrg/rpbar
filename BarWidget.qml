@@ -38,7 +38,7 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.7.0"
+    readonly property string buildId: "0.8.0"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -237,6 +237,21 @@ BarWidget {
                         color: root.bar ? root.bar.foreground : "white"
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
                         font.pixelSize: Style.font.displayLarge
+                    }
+
+                    // Clickable cover: opens this station's RP player page
+                    // (now playing, bio, lyrics, comments). Works on the
+                    // placeholder too -- the page needs no track.
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        acceptedButtons: Qt.LeftButton
+                        onClicked: {
+                            if (root.radio)
+                                root.radio.openPlayerPage();
+
+                        }
                     }
 
                 }
