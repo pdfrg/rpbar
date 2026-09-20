@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.6.0"
+    readonly property string buildId: "0.7.0"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -66,12 +66,18 @@ Item {
     property string cover: ""
     property string streamKey: ""
     property bool paused: false
+    // True while mpv is stalled waiting for cache (transient) or idling
+    // after a dead stream (until the reconnect lands). Drives the dimmed
+    // pill / "Buffering…" popup state; never toasts on its own.
+    property bool buffering: false
     property double lastNotifyAt: 0
     // IDs for mpv's observe_property, referenced in both handleMpvMessage
     // and the IPC connect handler -- named constants so a future observed
     // property can't silently collide.
     readonly property int metadataObserveId: 1
     readonly property int pauseObserveId: 2
+    readonly property int pausedForCacheObserveId: 3
+    readonly property int idleActiveObserveId: 4
     readonly property string currentUrl: Rp.streamUrl(root.station, root.quality)
     readonly property string stationTitle: Rp.stationByChan(root.station).title
     // API-second enrichment (M2b): the stream carries identity only;
@@ -114,6 +120,7 @@ Item {
         wantPlaying = true;
         restartAttempts = 0;
         root.paused = false;
+        root.buffering = false;
         if (!player.running)
             player.running = true;
 
@@ -123,7 +130,9 @@ Item {
     function stop() {
         wantPlaying = false;
         root.paused = false;
+        root.buffering = false;
         ipcRetryTimer.stop();
+        restartTimer.stop();
         ipcSocket.connected = false;
         player.running = false;
     }
@@ -307,6 +316,21 @@ Item {
         Quickshell.execDetached(args);
     }
 
+    // Dead-stream reconnect (end-file error/eof, process crash): single
+    // owner of the restart budget. Paces attempts through restartTimer
+    // (2.5 s) so a dead network can't spin; a permanently dead stream
+    // still gives up with one "Gave up reconnecting" toast.
+    function reconnectStream() {
+        if (root.restartAttempts >= 5) {
+            wantPlaying = false;
+            root.buffering = false;
+            Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "Stream dropped", "Gave up reconnecting -- press play to retry."]);
+            return ;
+        }
+        root.restartAttempts++;
+        restartTimer.restart();
+    }
+
     function handleMpvMessage(line) {
         // Guard against a message already in flight when the socket was
         // torn down (stop/switch flips connected synchronously first).
@@ -322,6 +346,18 @@ Item {
         if (!msg || typeof msg !== "object")
             return ;
 
+        // Dead-stream signal: with --idle=yes mpv does NOT exit on a
+        // dropped stream -- it emits end-file and idles, so onExited
+        // never fires. error/eof while we want audio means reconnect;
+        // stop/quit/redirect are our own commands (or playlist
+        // resolution) and anything while not wanting audio means ignore.
+        if (msg.event === "end-file") {
+            var reason = String(msg.reason || "");
+            if ((reason === "error" || reason === "eof") && root.wantPlaying && !root.switchingStation)
+                root.reconnectStream();
+
+            return ;
+        }
         if (msg.event !== "property-change")
             return ;
 
@@ -336,6 +372,17 @@ Item {
             // Stored for M3 (pill sync when media keys drive mpv); read-only
             // until the pause observer ships.
             root.paused = msg.data;
+        } else if (msg.id === root.pausedForCacheObserveId && typeof msg.data === "boolean") {
+            // Transient stall: wait, never reconnect. Clears itself when
+            // the buffer refills; mpv's own network-timeout (60 s) raises
+            // end-file first if the stall is really a dead stream.
+            root.buffering = msg.data;
+        } else if (msg.id === root.idleActiveObserveId && typeof msg.data === "boolean") {
+            // Corroborating latch only (nothing loaded post-end-file):
+            // a loaded file means the reconnect landed, so clear.
+            if (!msg.data)
+                root.buffering = false;
+
         }
     }
 
@@ -558,6 +605,7 @@ Item {
                 "coverFile": root.coverFile,
                 "playing": root.playing,
                 "paused": root.paused,
+                "buffering": root.buffering,
                 "pillWidthMode": root.pillWidthMode,
                 "pillMaxWidth": root.pillMaxWidth
             });
@@ -581,19 +629,13 @@ Item {
             }
             // The process behind the socket is gone: drop the connection
             // so in-flight messages can't land on the next instance's
-            // state. restartTimer re-establishes both below.
+            // state. reconnectStream paces and budgets the recovery.
             ipcSocket.connected = false;
             ipcRetryTimer.stop();
             if (!root.wantPlaying)
                 return ;
 
-            if (root.restartAttempts >= 5) {
-                root.wantPlaying = false;
-                Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "Stream dropped", "Gave up reconnecting -- press play to retry."]);
-                return ;
-            }
-            root.restartAttempts++;
-            restartTimer.restart();
+            root.reconnectStream();
         }
     }
 
@@ -602,9 +644,27 @@ Item {
 
         interval: 2500
         onTriggered: {
-            if (root.wantPlaying && !player.running) {
+            if (!root.wantPlaying)
+                return ;
+
+            if (!player.running) {
                 player.running = true;
                 root.kickIpc();
+            } else if (ipcSocket.connected) {
+                // Warm idle instance after end-file: reload in place, no
+                // respawn, MPRIS registration survives.
+                ipcSocket.write(JSON.stringify({
+                    "command": ["loadfile", root.currentUrl, "replace"]
+                }) + "\n");
+                ipcSocket.flush();
+            } else {
+                // Socket dead but the process lives (orphan): respawn it.
+                root.switchingStation = true;
+                player.running = false;
+                Qt.callLater(function() {
+                    player.running = true;
+                    root.kickIpc();
+                });
             }
         }
     }
@@ -632,6 +692,12 @@ Item {
                 }) + "\n");
                 write(JSON.stringify({
                     "command": ["observe_property", root.pauseObserveId, "pause"]
+                }) + "\n");
+                write(JSON.stringify({
+                    "command": ["observe_property", root.pausedForCacheObserveId, "paused-for-cache"]
+                }) + "\n");
+                write(JSON.stringify({
+                    "command": ["observe_property", root.idleActiveObserveId, "idle-active"]
                 }) + "\n");
                 flush();
             }

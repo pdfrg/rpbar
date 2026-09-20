@@ -22,6 +22,9 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 - Left-click the pill: play / stop (note glyph = playing). Pausing
   via media keys / the media widget shows a dimmed triangle; clicking
   it resumes.
+- Dropped streams reconnect on their own (up to 5 tries, then one
+  "Gave up reconnecting" toast): the pill dims and the popup shows
+  "Buffering…" while stalled. Stopping during a stall stays stopped.
 - The pill adapts to the built-in media widget: when `omarchy.media`
   shares the bar, the pill stays compact (station name only — the
   media widget already shows `Artist - Title`). When media is absent,

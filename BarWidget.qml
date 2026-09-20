@@ -15,6 +15,9 @@ BarWidget {
     // stream is conceptually on, and a left-click should still mean "stop".
     readonly property bool playing: radio ? radio.wantPlaying : false
     readonly property bool paused: radio ? radio.paused : false
+    // Stream stalled (cache wait) or idling after a drop until the
+    // reconnect lands: pill dims, popup shows Buffering…, no toast.
+    readonly property bool buffering: radio ? radio.buffering : false
     // 3-state pill (P1): note = playing (status); dimmed triangle =
     // externally paused (matches omarchy.media); plain triangle = stopped.
     readonly property string stationTitle: radio ? radio.stationTitle : ""
@@ -35,7 +38,7 @@ BarWidget {
     readonly property string trackText: radio ? Rp.pillText(radio.station, radio.artist, radio.title) : ""
     readonly property bool scrollMode: radio ? radio.pillWidthMode !== "grow" : true
     readonly property int pillMaxWidth: radio ? radio.pillMaxWidth : 180
-    readonly property string buildId: "0.6.0"
+    readonly property string buildId: "0.7.0"
     property bool popupOpen: false
 
     function buildInfo() {
@@ -80,9 +83,10 @@ BarWidget {
             anchors.verticalCenter: parent.verticalCenter
             // Note = playing (status indicator, cf. waybar mpris);
             // triangle = stopped (press to play) or paused-dimmed
-            // (press to resume, cf. omarchy.media).
+            // (press to resume, cf. omarchy.media). A stall dims the
+            // note but keeps it: the stream is conceptually still on.
             text: root.playing && !root.paused ? "󰝚" : "󰐊"
-            color: root.playing && !root.paused ? Color.accent : (root.bar ? Qt.darker(root.bar.barForeground, root.paused ? 2 : 1.5) : "grey")
+            color: root.playing && !root.paused && !root.buffering ? Color.accent : (root.bar ? Qt.darker(root.bar.barForeground, root.paused || root.buffering ? 2 : 1.5) : "grey")
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
         }
@@ -244,7 +248,7 @@ BarWidget {
 
                     // Media-widget parity: Title / Artist / Album (Year).
                     Text {
-                        text: root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in")
+                        text: root.buffering ? "Buffering…" : (root.radio && root.radio.title ? root.radio.title : (root.playing ? "Tuning in…" : "Press play to tune in"))
                         textFormat: Text.PlainText
                         color: root.bar ? root.bar.foreground : "white"
                         font.family: root.bar ? root.bar.fontFamily : Style.font.family
