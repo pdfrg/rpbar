@@ -67,10 +67,11 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
    popup header (highlighted while a timer runs) swaps to a same-size
    sleep view: Off / 15 / 30 / 60 with a live countdown (session-only —
    cancelled if you stop or switch stations). Clicking
-  the current station does nothing; Stop is the stop path. Clicking
-  the cover opens the station's Radio Paradise page (now playing,
+  the current station does nothing; Stop is the stop path.
+- Clicking the cover opens the station's Radio Paradise page (now playing,
   bio, lyrics, comments) in the default browser — pause rpbar first
-  if your browser autoplays the web player.
+  if your browser autoplays the web player. Right-clicking the cover opens
+  large album art in the default image viewer (imv). Press q to close.
 - The clock button in the popup header swaps to a same-size schedule
   view: UP NEXT (up to 3 upcoming songs from the station's announced
   block, with "in X min" cues), NOW (the playing track, accent-barred),
