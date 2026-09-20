@@ -38,7 +38,7 @@ Item {
     readonly property string socketPath: socketDir + "/rpbar-socket"
     readonly property string configDir: home + "/.config/rpbar"
     readonly property string configPath: configDir + "/config.json"
-    readonly property string buildId: "0.9.3"
+    readonly property string buildId: "0.10.4"
     // Playback state. wantPlaying is the intent (survives the stream-drop
     // restart backoff); playing reflects the live process.
     property bool wantPlaying: false
@@ -46,6 +46,27 @@ Item {
     property int station: 0
     property string quality: Rp.defaultQuality()
     property int volume: 70
+    property bool muted: false
+    property int volumeBeforeMute: 70
+    // Per-station memory (some stations are louder; serenity has its own
+    // quality menu). Keys are chan numbers as strings; missing entries
+    // fall back to volume/quality via Rp.volumeFor/qualityForStation.
+    property var volumeByStation: ({
+    })
+    property var qualityByStation: ({
+    })
+    // Sleep timer (session-only, never persisted): ms epoch when playback
+    // should stop, 0 = off. sleepMinutes is the chosen duration (for the
+    // popup highlight — remaining time counts down, the choice doesn't).
+    // Cancelled on manual stop/station change.
+    property double sleepAt: 0
+    property int sleepMinutes: 0
+    // Connectivity latch (B3): ms epoch of the last successful API result
+    // across all three workers; offline reads true when playing but every
+    // worker has been failing for over a minute.
+    property double lastApiOkAt: 0
+    readonly property bool offline: root.playing && root.lastApiOkAt > 0 && (Date.now() - root.lastApiOkAt > 60000)
+    property real wheelAccum: 0
     property bool notifyOnTrackChange: true
     // Conditional-pill width behavior (no-media mode only): "scroll" keeps
     // a fixed max width and marquees; "grow" lets the pill widen with the
@@ -165,6 +186,7 @@ Item {
         wantPlaying = false;
         root.paused = false;
         root.buffering = false;
+        root.cancelSleep();
         ipcRetryTimer.stop();
         restartTimer.stop();
         ipcSocket.connected = false;
@@ -200,6 +222,7 @@ Item {
         var st = Rp.stationByChan(chan);
         root.station = st.chan;
         root.paused = false;
+        root.cancelSleep();
         // A new station means a new schedule: drop the old block/history
         // (wrong-station data is worse than none) until the fetch lands.
         root.blockItems = [];
@@ -208,16 +231,25 @@ Item {
         root.schedBlockId = "";
         root.schedChan = -1;
         root.blockEndMs = 0;
-        // The new station may not offer the current quality (e.g. aac-320
-        // -> serenity): fall back to its default instead of failing.
-        root.quality = Rp.qualityOrDefault(root.station, root.quality);
+        // Per-station memory: restore this station's last quality/volume
+        // (validated/clamped); the new station may not offer the current
+        // quality (e.g. aac-320 -> serenity) so it still remaps to default.
+        root.quality = Rp.qualityForStation(root.qualityByStation, root.station, root.quality);
+        root.volume = Rp.volumeFor(root.volumeByStation, root.station, root.volume);
         root.saveConfig({
             "station": root.station,
-            "quality": root.quality
+            "quality": root.quality,
+            "qualityByStation": root.qualityByStation,
+            "volume": root.volume,
+            "volumeByStation": root.volumeByStation
         });
         if (!wantPlaying)
             return ;
 
+        // Live volume while warm: the respawn below rebuilds the process,
+        // but an in-place loadfile path (restartTimer) keeps it — either
+        // way applyVolumeLive on connect converges it.
+        root.applyVolumeLive();
         // Killing the process is asynchronous: the old exit can land after
         // the new instance starts, so the guard below (not the restart
         // budget) owns that one exit.
@@ -249,8 +281,13 @@ Item {
 
         root.quality = nq;
         root.paused = false;
+        var qm = root.qualityByStation || {
+        };
+        qm[String(root.station)] = nq;
+        root.qualityByStation = qm;
         root.saveConfig({
-            "quality": root.quality
+            "quality": root.quality,
+            "qualityByStation": root.qualityByStation
         });
         if (!wantPlaying)
             return ;
@@ -457,23 +494,97 @@ Item {
         }
     }
 
+    // Live volume (A2): mpv `volume` and `mute` are runtime-writable
+    // (unlike metadata), so this writes over IPC with no respawn. The
+    // --volume= command line stays the cold-start default only. Volume is
+    // remembered per station (A4/G) and merged to disk.
+    function applyVolumeLive() {
+        if (!ipcSocket.connected)
+            return ;
+
+        ipcSocket.write(JSON.stringify({
+            "command": ["set_property", "volume", root.volume]
+        }) + "\n");
+        ipcSocket.write(JSON.stringify({
+            "command": ["set_property", "mute", !!root.muted]
+        }) + "\n");
+        ipcSocket.flush();
+    }
+
     function setVolume(v) {
-        var nv = Math.max(0, Math.min(130, Math.round(v)));
+        var nv = Rp.clampVolume(v);
         root.volume = nv;
+        if (root.muted && nv > 0)
+            root.muted = false;
+
+        var m = root.volumeByStation || {
+        };
+        m[String(root.station)] = nv;
+        root.volumeByStation = m;
         root.saveConfig({
-            "volume": root.volume
+            "volume": root.volume,
+            "volumeByStation": root.volumeByStation,
+            "muted": root.muted
         });
-        // Pre-IPC (milestone 3): volume applies via the mpv command line,
-        // so a live stream respawns to pick it up.
-        if (wantPlaying && player.running) {
-            switchingStation = true;
-            ipcSocket.connected = false;
-            player.running = false;
-            Qt.callLater(function() {
-                player.running = true;
-                root.kickIpc();
-            });
+        root.applyVolumeLive();
+    }
+
+    function setMuted(on) {
+        var want = !!on;
+        if (want && !root.muted)
+            root.volumeBeforeMute = root.volume;
+
+        root.muted = want;
+        root.saveConfig({
+            "muted": root.muted
+        });
+        root.applyVolumeLive();
+    }
+
+    function toggleMute() {
+        root.setMuted(!root.muted);
+    }
+
+    // Sleep timer (D4, session-only): minutes <= 0 cancels. Fires via
+    // sleepTimer; cancelled on manual stop or station change.
+    function setSleep(min) {
+        var n = Number(min);
+        if (!isFinite(n) || n <= 0) {
+            root.sleepAt = 0;
+            root.sleepMinutes = 0;
+            sleepTimer.stop();
+            return ;
         }
+        var m = Math.min(480, Math.max(1, Math.round(n)));
+        root.sleepMinutes = m;
+        root.sleepAt = Date.now() + m * 60000;
+        sleepTimer.restart();
+    }
+
+    function cancelSleep() {
+        root.sleepAt = 0;
+        root.sleepMinutes = 0;
+        sleepTimer.stop();
+    }
+
+    // Large album art (C5): derive the l (500px) variant of any s/m/l
+    // cover and fetch it one-shot to /tmp (never the bar/toast cache
+    // file, which stays 200px m). Opened with xdg-open (image viewer),
+    // never omarchy-launch-browser (browser-only). Placeholder/evil
+    // covers are gated to a no-op by Rp.largeCoverUrl.
+    function openLargeArt() {
+        root.openLargeArtFor(root.cover);
+    }
+
+    function openLargeArtFor(url) {
+        var big = Rp.largeCoverUrl(url);
+        var tmp = Rp.largeArtTmpPath(url);
+        if (big === "" || tmp === "")
+            return ;
+
+        largeArtProc.wantPath = tmp;
+        largeArtProc.command = ["/usr/bin/curl", "-sS", "-L", "--fail", "--remove-on-error", "--max-time", "15", "--max-filesize", "1048576", "-A", "rpbar/" + root.buildId, "-o", tmp, big];
+        largeArtProc.running = true;
     }
 
     // Config save merge (amla pattern): overlay only the dirty keys onto a
@@ -505,8 +616,36 @@ Item {
             root.quality = Rp.qualityOrDefault(root.station, obj.quality);
 
         if (typeof obj.volume === "number")
-            root.volume = Math.max(0, Math.min(130, Math.round(obj.volume)));
+            root.volume = Rp.clampVolume(obj.volume);
 
+        if (typeof obj.muted === "boolean")
+            root.muted = obj.muted;
+
+        if (typeof obj.volumeBeforeMute === "number")
+            root.volumeBeforeMute = Rp.clampVolume(obj.volumeBeforeMute);
+
+        if (obj.volumeByStation && typeof obj.volumeByStation === "object") {
+            var vm = {
+            };
+            for (var vk in obj.volumeByStation) {
+                if (obj.volumeByStation[vk] !== undefined)
+                    vm[String(vk)] = Rp.clampVolume(obj.volumeByStation[vk]);
+
+            }
+            root.volumeByStation = vm;
+            root.volume = Rp.volumeFor(root.volumeByStation, root.station, root.volume);
+        }
+        if (obj.qualityByStation && typeof obj.qualityByStation === "object") {
+            var qm2 = {
+            };
+            for (var qk in obj.qualityByStation) {
+                if (obj.qualityByStation[qk] !== undefined)
+                    qm2[String(qk)] = Rp.qualityOrDefault(Number(qk), obj.qualityByStation[qk]);
+
+            }
+            root.qualityByStation = qm2;
+            root.quality = Rp.qualityForStation(root.qualityByStation, root.station, root.quality);
+        }
         if (typeof obj.notifyOnTrackChange === "boolean")
             root.notifyOnTrackChange = obj.notifyOnTrackChange;
 
@@ -557,6 +696,9 @@ Item {
         if (!song)
             return ;
 
+        // Any well-formed payload proves connectivity, even on identity
+        // mismatch (mid-transition disagreement keeps last-good values).
+        root.lastApiOkAt = Date.now();
         var apiArtist = Rp.sanitizeText(song.artist, 128);
         var apiTitle = Rp.sanitizeText(song.title, 256);
         // Identity gate: enrichment must describe the track actually
@@ -623,6 +765,7 @@ Item {
         root.schedBlockId = res.blockId;
         root.schedChan = reqChan;
         root.blockFetchedAt = Date.now();
+        root.lastApiOkAt = Date.now();
         var last = res.items[res.items.length - 1];
         root.blockEndMs = last.playTime > 0 ? last.playTime + (last.duration > 0 ? last.duration : 240000) : 0;
         root.upcomingItems = Rp.splitSchedule(res.items, root.streamKey, Date.now(), 3);
@@ -661,7 +804,17 @@ Item {
         if (reqChan !== root.station)
             return ;
 
-        root.historyItems = Rp.parsePlaylist(text, root.streamKey, 5);
+        var data = null;
+        try {
+            data = JSON.parse(String(text || ""));
+        } catch (e) {
+            return ;
+        }
+        if (!data || typeof data !== "object")
+            return ;
+
+        root.lastApiOkAt = Date.now();
+        root.historyItems = Rp.parsePlaylist(text, root.streamKey, 6);
         root.histFetchedAt = Date.now();
         root.queueArtForSchedule();
     }
@@ -804,8 +957,68 @@ Item {
         root.pumpArtQueue();
     }
 
+    // Direct-play (F2, Omarchy-style): jump straight to a station from a
+    // keybind or script without clicking. Bar-widget summon drops IPC
+    // payloads (shell.qml), so this lives on our own target instead:
+    //   omarchy-shell io.github.pdfrg.rpbar playStation '{"station":1,"quality":"flacm","volume":70}'
+    // Unknown keys are ignored, bad values fall back, malformed JSON is
+    // a no-op — never throws, never corrupts state.
+    function playStation(json) {
+        var req = {
+        };
+        try {
+            req = JSON.parse(String(json || "{}"));
+        } catch (e) {
+            return "ok";
+        }
+        if (req && typeof req === "object") {
+            if (req.volume !== undefined)
+                root.volume = Rp.clampVolume(req.volume);
+
+            if (req.muted !== undefined)
+                root.muted = !!req.muted;
+
+            var m = root.volumeByStation || {
+            };
+            if (req.station !== undefined) {
+                var st = Rp.stationByChan(Number(req.station));
+                if (req.volume !== undefined)
+                    m[String(st.chan)] = root.volume;
+
+                if (req.quality !== undefined) {
+                    var qm = root.qualityByStation || {
+                    };
+                    qm[String(st.chan)] = Rp.qualityOrDefault(st.chan, req.quality);
+                    root.qualityByStation = qm;
+                }
+                root.volumeByStation = m;
+            }
+            root.saveConfig({
+                "volume": root.volume,
+                "volumeByStation": root.volumeByStation,
+                "qualityByStation": root.qualityByStation,
+                "muted": root.muted
+            });
+            if (req.station !== undefined)
+                root.switchStation(Number(req.station));
+            else
+                root.applyVolumeLive();
+            if (req.play !== false && !root.wantPlaying)
+                root.play();
+
+        }
+        return "ok";
+    }
+
     Component.onCompleted: {
         dirSetup.running = true;
+        // Orphan killer (B1): a previous shell's mpv can outlive the
+        // Service and hold rpbar-socket, racing the 8 s retry budget on
+        // first play. Kill only processes holding OUR socket path (never
+        // a foreign mpv), then unlink the stale socket. The bracket trick
+        // (sock[e]t) keeps pkill from matching its own command line, and
+        // this runs once at start — never while playing.
+        orphanProc.running = true;
     }
 
     // CLI control plane (verification + manual testing without clicking).
@@ -844,6 +1057,50 @@ Item {
             return root.quality;
         }
 
+        function setVolume(v: string) : string {
+            root.setVolume(Number(v));
+            return String(root.volume);
+        }
+
+        function volumeUp() : string {
+            root.setVolume(root.volume + 5);
+            return String(root.volume);
+        }
+
+        function volumeDown() : string {
+            root.setVolume(root.volume - 5);
+            return String(root.volume);
+        }
+
+        function mute() : string {
+            root.setMuted(true);
+            return "ok";
+        }
+
+        function unmute() : string {
+            root.setMuted(false);
+            return "ok";
+        }
+
+        function toggleMute() : string {
+            root.toggleMute();
+            return root.muted ? "muted" : String(root.volume);
+        }
+
+        function sleep(min: string) : string {
+            root.setSleep(Number(min));
+            return String(root.sleepAt);
+        }
+
+        function playStation(req: string) : string {
+            return root.playStation(req);
+        }
+
+        function openLargeArt() : string {
+            root.openLargeArt();
+            return "ok";
+        }
+
         function nowPlaying() : string {
             return JSON.stringify({
                 "station": root.station,
@@ -859,6 +1116,13 @@ Item {
                 "playing": root.playing,
                 "paused": root.paused,
                 "buffering": root.buffering,
+                "restartAttempts": root.restartAttempts,
+                "offline": root.offline,
+                "volume": root.volume,
+                "muted": root.muted,
+                "sleepAt": root.sleepAt,
+                "sleepMinutes": root.sleepMinutes,
+                "sleepLabel": Rp.sleepLabel(root.sleepAt, Date.now()),
                 "pillWidthMode": root.pillWidthMode,
                 "pillMaxWidth": root.pillMaxWidth
             });
@@ -886,7 +1150,7 @@ Item {
     Process {
         id: player
 
-        command: ["mpv", "--no-video", "--no-terminal", "--idle=yes", "--input-ipc-server=" + root.socketPath, "--volume=" + root.volume, "--title=Radio Paradise", root.currentUrl]
+        command: ["mpv", "--no-video", "--no-terminal", "--idle=yes", "--input-ipc-server=" + root.socketPath, "--volume=" + root.volume, root.muted ? "--mute=yes" : "--mute=no", "--title=Radio Paradise", root.currentUrl]
         onExited: {
             if (root.switchingStation) {
                 root.switchingStation = false;
@@ -965,6 +1229,9 @@ Item {
                     "command": ["observe_property", root.idleActiveObserveId, "idle-active"]
                 }) + "\n");
                 flush();
+                // Converge live volume/mute on every (re)connect: covers
+                // cold starts, respawns, and per-station restores.
+                root.applyVolumeLive();
             }
         }
 
@@ -1085,6 +1352,54 @@ Item {
 
         command: ["/usr/bin/mkdir", "-p", root.configDir, root.socketDir, root.artDir]
         running: false
+    }
+
+    // Orphan killer (B1, runs once at start): see onCompleted above.
+    // Argv-only, no shell string interpolation of paths.
+    Process {
+        id: orphanProc
+
+        command: ["/usr/bin/sh", "-c", "pkill -f 'mpv.*rpbar-sock[e]t' 2>/dev/null; /bin/rm -f \"$SOCK\""]
+        environment: {
+            "SOCK": root.socketPath,
+            "PATH": "/usr/bin:/bin"
+        }
+        running: false
+    }
+
+    // Sleep timer (D4, session-only): 30 s tick so a minute-granularity
+    // timer can't drift far past the deadline. Fires once with a toast.
+    Timer {
+        id: sleepTimer
+
+        interval: 15000
+        repeat: true
+        onTriggered: {
+            if (root.sleepAt <= 0)
+                return ;
+
+            if (Date.now() >= root.sleepAt) {
+                root.sleepAt = 0;
+                root.sleepMinutes = 0;
+                stop();
+                root.stop();
+                Quickshell.execDetached(["notify-send", "-a", "Radio Paradise", "-e", "--", "Radio Paradise", "Sleep timer — playback stopped."]);
+            }
+        }
+    }
+
+    // Large-art one-shot (C5): bounded curl to /tmp, then xdg-open in the
+    // image viewer. Never touches the bar/toast cache file.
+    Process {
+        id: largeArtProc
+
+        property string wantPath: ""
+
+        onExited: function(exitCode, exitStatus) {
+            if (exitCode === 0 && largeArtProc.wantPath !== "")
+                Quickshell.execDetached(["xdg-open", largeArtProc.wantPath]);
+
+        }
     }
 
     FileView {
