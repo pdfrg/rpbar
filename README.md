@@ -46,9 +46,18 @@ restarts the shell. Re-run after every change with a bumped `buildId`.
 - The pill adapts to the built-in media widget: when `omarchy.media`
   shares the bar, the pill stays compact (station name only — the
   media widget already shows `Artist - Title`). When media is absent,
-  the pill shows the track itself (`MM: Artist - Title`, with
-  per-station abbreviations MM/ML/R/G/B/S/K). Detection is per-bar
-  and switches live when the bar layout changes.
+  the pill shows the track itself (`MM: Artist - Title`). Detection is
+  per-bar and switches live when the bar layout changes.
+
+| Key | Pill | Station | Chan |
+|---|---|---|---|
+| 1 | MM | The Main Mix | 0 |
+| 2 | ML | Mellow Mix | 1 |
+| 3 | R | RockIt! | 2 |
+| 4 | G | The Globe | 3 |
+| 5 | B | Beyond... | 5 |
+| 6 | S | Serenity | 42 |
+| 7 | K | KFAT | 945 |
 - Right-click the pill: popup with now-playing (Title / Artist /
    Album (Year)) + cover, 7 stations, a quality row (AAC 128 / AAC 320 /
    MP3 192 / FLAC+; serenity offers 64k AAC and FLAC only), transport with prev/next-station
@@ -88,7 +97,7 @@ album line (omarchy renders at most 3 notification body lines). Covers cache to
 revisits are instant. Notifications fire once per track when
 enrichment lands, with the cached art attached.
 
-## Keys
+### Keyboard
 
 Bind the popup (add to `~/.config/hypr/bindings.lua`):
 
@@ -200,7 +209,7 @@ omarchy-shell io.github.pdfrg.rpbar playStation '{"station":1,"quality":"flacm"}
 ```
 
 Keyboard: `omarchy-shell shell summon|toggle|hide io.github.pdfrg.rpbar`
-opens the popup on the focused monitor (see Keys above for bindings).
+opens the popup on the focused monitor (see Keyboard under Use for bindings).
 Mouse wheel on the pill adjusts volume (±5/notch, per-station memory).
 Right-click a cover for the large (500px) art in the image viewer;
 left-click still opens the station page.
